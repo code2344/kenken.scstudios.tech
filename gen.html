@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>KenKen Generator</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin: 20px; }
+    label { margin: 0 10px; }
+    canvas { margin-top: 20px; border: 1px solid #444; }
+    #canvasContainer { overflow: auto; max-height: 80vh; }
+  </style>
+</head>
+<body>
+
+<h1>KenKen Puzzle Generator</h1>
+
+<label>Grid Size: <input id="sizeInput" type="number" value="5" min="2" max="1000"></label><br>
+<label><input type="checkbox" class="op" value="+">+</label>
+<label><input type="checkbox" class="op" value="-">−</label>
+<label><input type="checkbox" class="op" value="×">×</label>
+<label><input type="checkbox" class="op" value="÷">÷</label>
+<label><input type="checkbox" class="op" value="=">=</label><br><br>
+
+<button onclick="generate()">Generate Puzzle</button>
+<button onclick="downloadImage(false)">Download Puzzle Image</button>
+<button onclick="downloadImage(true)">Download Solution Image</button>
+<button onclick="downloadJSON()">Download Puzzle JSON</button>
+
+<div id="canvasContainer">
+  <canvas id="puzzleCanvas" width="1" height="1"></canvas>
+</div>
+
+<script>
+let solution = [], cages = [], size = 5, allowedOps = [];
+const cellSize = 40;
+
+function generate() {
+  size = parseInt(document.getElementById("sizeInput").value);
+  allowedOps = Array.from(document.querySelectorAll('.op:checked')).map(c => c.value);
+  if (allowedOps.length === 0) return alert("Select at least one operator.");
+  solution = generateLatinSquare(size);
+  cages = generateCages(size, allowedOps);
+  drawPuzzle(false);
+}
+
+function generateLatinSquare(n) {
+  let grid = Array.from({length: n}, () => Array(n).fill(0));
+  const base = Array.from({length: n}, (_, i) => i + 1);
+  for (let r = 0; r < n; r++) {
+    const row = base.slice(r).concat(base.slice(0, r));
+    grid[r] = [...row];
+  }
+  for (let i = 0; i < n; i++) {
+    const j = Math.floor(Math.random() * n);
+    for (let r = 0; r < n; r++) {
+      [grid[r][i], grid[r][j]] = [grid[r][j], grid[r][i]];
+    }
+  }
+  return grid;
+}
+
+function generateCages(n, ops) {
+  const flat = [], visited = Array.from({length: n}, () => Array(n).fill(false));
+  for (let r = 0; r < n; r++)
+    for (let c = 0; c < n; c++)
+      flat.push([r, c]);
+
+  const shuffle = arr => arr.sort(() => Math.random() - 0.5);
+  const result = [];
+  shuffle(flat);
+
+  while (flat.length) {
+    const [r, c] = flat.pop();
+    if (visited[r][c]) continue;
+    let cage = [[r, c]];
+    visited[r][c] = true;
+
+    const cageSize = Math.floor(Math.random() * 3) + 1;
+    for (let i = 1; i < cageSize; i++) {
+      const [rr, cc] = cage[Math.floor(Math.random() * cage.length)];
+      const dirs = shuffle([[0,1],[1,0],[-1,0],[0,-1]]);
+      for (let [dr, dc] of dirs) {
+        const nr = rr + dr, nc = cc + dc;
+        if (nr >= 0 && nc >= 0 && nr < n && nc < n && !visited[nr][nc]) {
+          visited[nr][nc] = true;
+          cage.push([nr, nc]);
+          break;
+        }
+      }
+    }
+
+    const values = cage.map(([r, c]) => solution[r][c]);
+    const op = cage.length === 1 ? '=' : ops[Math.floor(Math.random() * ops.length)];
+    const target = computeTarget(values, op);
+    result.push({ cells: cage, op, target });
+  }
+
+  return result;
+}
+
+function computeTarget(values, op) {
+  if (op === '+') return values.reduce((a, b) => a + b, 0);
+  if (op === '−' || op === '-') return Math.abs(values[0] - values[1]);
+  if (op === '×') return values.reduce((a, b) => a * b, 1);
+  if (op === '÷') return Math.max(...values) / Math.min(...values);
+  if (op === '=') return values[0];
+}
+
+function getCageIndex(r, c) {
+  for (let i = 0; i < cages.length; i++) {
+    if (cages[i].cells.some(([x, y]) => x === r && y === c)) return i;
+  }
+  return null;
+}
+
+function drawPuzzle(showSolution) {
+  const canvas = document.getElementById("puzzleCanvas");
+  canvas.width = size * cellSize;
+  canvas.height = size * cellSize;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.font = "12px sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const x = c * cellSize, y = r * cellSize;
+      const cageId = getCageIndex(r, c);
+
+      const top = r === 0 || getCageIndex(r - 1, c) !== cageId;
+      const left = c === 0 || getCageIndex(r, c - 1) !== cageId;
+      const bottom = r === size - 1 || getCageIndex(r + 1, c) !== cageId;
+      const right = c === size - 1 || getCageIndex(r, c + 1) !== cageId;
+
+      ctx.beginPath();
+      if (top) {
+        ctx.moveTo(x, y); ctx.lineTo(x + cellSize, y);
+      }
+      if (left) {
+        ctx.moveTo(x, y); ctx.lineTo(x, y + cellSize);
+      }
+      if (bottom) {
+        ctx.moveTo(x, y + cellSize); ctx.lineTo(x + cellSize, y + cellSize);
+      }
+      if (right) {
+        ctx.moveTo(x + cellSize, y); ctx.lineTo(x + cellSize, y + cellSize);
+      }
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
+  cages.forEach(cage => {
+    const [r0, c0] = cage.cells[0];
+    ctx.fillStyle = "#000";
+    ctx.fillText(`${cage.target}${cage.op}`, c0 * cellSize + 2, r0 * cellSize + 2);
+  });
+
+  if (showSolution) {
+    ctx.font = "18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#000";
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        ctx.fillText(solution[r][c], c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
+      }
+    }
+  }
+}
+
+function downloadImage(showSolution) {
+  drawPuzzle(showSolution);
+  const canvas = document.getElementById("puzzleCanvas");
+  const link = document.createElement("a");
+  link.download = showSolution ? "kenken_solution.png" : "kenken_puzzle.png";
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+}
+
+function downloadJSON() {
+  const data = {
+    size,
+    cages,
+    solution
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
+  const link = document.createElement("a");
+  link.download = "kenken_puzzle.json";
+  link.href = URL.createObjectURL(blob);
+  link.click();
+}
+</script>
+
+</body>
+</html>
