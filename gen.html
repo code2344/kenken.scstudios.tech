@@ -1,13 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>KenKen Generator</title>
+  <meta charset="UTF-8" />
+  <title>KenKen Puzzle Generator</title>
   <style>
     body { font-family: sans-serif; text-align: center; margin: 20px; }
     label { margin: 0 10px; }
-    canvas { margin-top: 20px; border: 1px solid #444; }
-    #canvasContainer { overflow: auto; max-height: 80vh; }
+    #canvasContainer {
+      overflow: auto;
+      max-height: 80vh;
+      background: #eee; /* light grey background behind canvas */
+      display: inline-block;
+      padding: 10px;
+      border: 1px solid #ccc;
+    }
+    canvas { margin-top: 20px; border: 1px solid #444; background: white; }
   </style>
 </head>
 <body>
@@ -43,6 +50,7 @@ function generate() {
   drawPuzzle(false);
 }
 
+// Generate a random Latin square
 function generateLatinSquare(n) {
   let grid = Array.from({length: n}, () => Array(n).fill(0));
   const base = Array.from({length: n}, (_, i) => i + 1);
@@ -75,22 +83,43 @@ function generateCages(n, ops) {
     let cage = [[r, c]];
     visited[r][c] = true;
 
-    const cageSize = Math.floor(Math.random() * 3) + 1;
+    // Limit cage size to max 3 cells or less for big grids to avoid huge targets
+    const maxCageSize = n > 20 ? 2 : 3;
+    const cageSize = Math.min(Math.floor(Math.random() * maxCageSize) + 1, flat.length + 1);
+
     for (let i = 1; i < cageSize; i++) {
       const [rr, cc] = cage[Math.floor(Math.random() * cage.length)];
       const dirs = shuffle([[0,1],[1,0],[-1,0],[0,-1]]);
+      let added = false;
       for (let [dr, dc] of dirs) {
         const nr = rr + dr, nc = cc + dc;
         if (nr >= 0 && nc >= 0 && nr < n && nc < n && !visited[nr][nc]) {
           visited[nr][nc] = true;
           cage.push([nr, nc]);
+          added = true;
           break;
         }
       }
+      if (!added) break; // no more neighbours
     }
 
     const values = cage.map(([r, c]) => solution[r][c]);
-    const op = cage.length === 1 ? '=' : ops[Math.floor(Math.random() * ops.length)];
+
+    // Filter operators to those allowed and valid for cage size:
+    // - '=' only for single cell cages
+    // - '-' and '÷' only for 2-cell cages
+    // - '+' and '×' for cages size >= 1
+    let validOps;
+    if (cage.length === 1) {
+      validOps = ops.filter(o => o === '=' || o === '+');
+    } else if (cage.length === 2) {
+      validOps = ops.filter(o => o !== '=');
+    } else {
+      validOps = ops.filter(o => o === '+' || o === '×');
+    }
+    if (validOps.length === 0) validOps = ['+']; // fallback
+
+    const op = validOps[Math.floor(Math.random() * validOps.length)];
     const target = computeTarget(values, op);
     result.push({ cells: cage, op, target });
   }
@@ -98,14 +127,29 @@ function generateCages(n, ops) {
   return result;
 }
 
+// Compute cage target with safeguards
 function computeTarget(values, op) {
   if (op === '+') return values.reduce((a, b) => a + b, 0);
-  if (op === '−' || op === '-') return Math.abs(values[0] - values[1]);
-  if (op === '×') return values.reduce((a, b) => a * b, 1);
-  if (op === '÷') return Math.max(...values) / Math.min(...values);
+  if (op === '-') {
+    if (values.length !== 2) return values[0]; // fallback
+    return Math.abs(values[0] - values[1]);
+  }
+  if (op === '×') {
+    return values.reduce((a, b) => a * b, 1);
+  }
+  if (op === '÷') {
+    if (values.length !== 2) return values[0]; // fallback
+    // Ensure division target is integer and max/min divisible
+    const [a, b] = values;
+    if (a % b === 0) return a / b;
+    if (b % a === 0) return b / a;
+    // fallback to multiplication if division invalid
+    return a * b;
+  }
   if (op === '=') return values[0];
 }
 
+// Get cage index for a cell
 function getCageIndex(r, c) {
   for (let i = 0; i < cages.length; i++) {
     if (cages[i].cells.some(([x, y]) => x === r && y === c)) return i;
@@ -118,16 +162,39 @@ function drawPuzzle(showSolution) {
   canvas.width = size * cellSize;
   canvas.height = size * cellSize;
   const ctx = canvas.getContext("2d");
+
+  // Draw light grey background grid
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  ctx.font = "12px sans-serif";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-
+  ctx.fillStyle = '#f0f0f0';
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) {
+      ctx.fillRect(c * cellSize, r * cellSize, cellSize, cellSize);
+    }
+  }
+
+  // Draw grid lines
+  ctx.strokeStyle = "#bbb";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= size; i++) {
+    // vertical lines
+    ctx.beginPath();
+    ctx.moveTo(i * cellSize, 0);
+    ctx.lineTo(i * cellSize, canvas.height);
+    ctx.stroke();
+    // horizontal lines
+    ctx.beginPath();
+    ctx.moveTo(0, i * cellSize);
+    ctx.lineTo(canvas.width, i * cellSize);
+    ctx.stroke();
+  }
+
+  // Draw cage borders (thick lines)
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 2;
+
+  cages.forEach((cage, cageId) => {
+    cage.cells.forEach(([r, c]) => {
       const x = c * cellSize, y = r * cellSize;
-      const cageId = getCageIndex(r, c);
 
       const top = r === 0 || getCageIndex(r - 1, c) !== cageId;
       const left = c === 0 || getCageIndex(r, c - 1) !== cageId;
@@ -147,18 +214,21 @@ function drawPuzzle(showSolution) {
       if (right) {
         ctx.moveTo(x + cellSize, y); ctx.lineTo(x + cellSize, y + cellSize);
       }
-      ctx.strokeStyle = "#000";
-      ctx.lineWidth = 2;
       ctx.stroke();
-    }
-  }
+    });
+  });
 
+  // Draw cage labels
+  ctx.font = "12px sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = "#000";
   cages.forEach(cage => {
     const [r0, c0] = cage.cells[0];
-    ctx.fillStyle = "#000";
     ctx.fillText(`${cage.target}${cage.op}`, c0 * cellSize + 2, r0 * cellSize + 2);
   });
 
+  // Draw solution numbers if requested
   if (showSolution) {
     ctx.font = "18px sans-serif";
     ctx.textAlign = "center";
