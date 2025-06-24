@@ -222,7 +222,7 @@ function drawPuzzle(showSolution) {
   });
 
   // Draw cage labels
-  ctx.font = "12px sans-serif";
+  ctx.font = `${Math.floor(cellSize * 0.5)}px sans-serif`;
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   ctx.fillStyle = "#000";
