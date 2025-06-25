@@ -174,8 +174,8 @@
         // This ensures the Module object is defined first and then the script is fetched.
         (function loadOpenCvScript() {
             const script = document.createElement('script');
-            // FIX: Reverted to a known good, official CDN link for OpenCV.js 4.7.0 for stability.
-            script.src = "https://docs.opencv.org/4.7.0/opencv.js"; 
+            // FIX: Using the official OpenCV.js 4.x CDN, which points to the latest stable version.
+            script.src = "https://docs.opencv.org/4.x/opencv.js"; 
             script.async = true; // Load asynchronously
             script.onerror = (e) => {
                 console.error("Failed to load OpenCV.js script:", e);
@@ -550,11 +550,22 @@
 
                 // Wait for the image to load on the imgElement
                 await new Promise((resolve, reject) => {
+                    const timeoutId = setTimeout(() => {
+                        reject(new Error("Image loading timed out. Check image file or network."));
+                    }, 10000); // 10 seconds timeout
+
                     if (imgElement.complete && imgElement.naturalWidth !== 0) { // Already loaded
+                        clearTimeout(timeoutId);
                         resolve();
                     } else {
-                        imgElement.onload = () => resolve();
-                        imgElement.onerror = () => reject(new Error("Image failed to load onto imgElement."));
+                        imgElement.onload = () => {
+                            clearTimeout(timeoutId);
+                            resolve();
+                        };
+                        imgElement.onerror = (e) => {
+                            clearTimeout(timeoutId);
+                            reject(new Error(`Image failed to load onto imgElement. Check file validity/permissions. Event: ${JSON.stringify(e)}`));
+                        };
                     }
                 });
 
