@@ -119,9 +119,7 @@
         }
         hr { border: 0; height: 1px; background-image: linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0)); margin: 30px auto; width: 80%; }
     </style>
-    <!-- OpenCV script -->
     <script src="https://docs.opencv.org/4.x/opencv.js"></script>
-    <!-- Tesseract script -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 </head>
 <body>
@@ -148,8 +146,7 @@
     <h3>Import a Screenshot</h3>
     <input type="file" id="imgInput" accept="image/*">
     <br><img id="preview" alt="Image Preview">
-    <canvas id="outputCanvas"></canvas> <!-- Added canvas for OpenCV output -->
-    <div id="progressBox" style="display:none"><div id="bar"></div></div>
+    <canvas id="outputCanvas"></canvas> <div id="progressBox" style="display:none"><div id="bar"></div></div>
     <p><button id="importBtn" disabled onclick="importImage()">Import This Image</button></p>
 
     <table id="grid"></table>
@@ -170,56 +167,51 @@
         let size = 6, grid = [], cages = [], selectedCells = [], selectedOp = null;
         let initialBoardState = [];
 
-        // --- Library Initialization ---
-        // OpenCV's callback for when its WASM module is fully loaded and ready
-        cv.onRuntimeInitialized = () => {
-            console.log("OpenCV (cv.onRuntimeInitialized) is ready!");
-            cvReadyPromiseResolver();
-        };
+        // --- Library Initialization wrapped in DOMContentLoaded ---
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log("DOMContentLoaded fired. Starting library initialization.");
 
-        // Tesseract worker initialization
-        (async () => {
-            try {
-                tessWorker = Tesseract.createWorker({
-                    // **CRITICAL: Explicitly setting CDN paths for worker and language data.**
-                    // This resolves issues where Tesseract.js might fail to find its internal
-                    // assets (like worker.min.js and the WASM core within it, and language data)
-                    // in certain hosting environments like GitHub Pages, especially on mobile.
-                    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/worker.min.js',
-                    langPath: 'https://tessdata.projectnaptha.com/4.00/', // Base URL for eng.traineddata.gz
-                    // corePath is explicitly OMITTED here as the WASM is handled by worker.min.js in v4.0.2
-                    logger: m => {
-                        // This logger is for Tesseract's *internal* loading and progress
-                        // We'll update the main app's progress bar in importImage()
-                        // console.log("Tesseract Internal Log:", m); // Uncomment for verbose Tesseract logs
-                    }
+            // OpenCV's callback for when its WASM module is fully loaded and ready
+            cv.onRuntimeInitialized = () => {
+                console.log("OpenCV (cv.onRuntimeInitialized) is ready!");
+                cvReadyPromiseResolver();
+            };
+
+            // Tesseract worker initialization
+            (async () => {
+                try {
+                    tessWorker = Tesseract.createWorker({
+                        // **IMPORTANT: POINTING TO YOUR SELF-HOSTED FILES**
+                        workerPath: './tesseract_assets/worker.min.js',
+                        langPath: './tesseract_assets/traineddata/', // Tesseract will look for eng.traineddata.gz inside this folder
+                        logger: m => { /* Console logging for Tesseract progress is removed here, handled during import */ }
+                    });
+                    await tessWorker.load();
+                    await tessWorker.loadLanguage('eng');
+                    await tessWorker.initialize('eng');
+                    console.log("Tesseract is ready!");
+                    tessReadyPromiseResolver();
+                } catch (error) {
+                    console.error("Failed to initialize Tesseract:", error);
+                    document.getElementById('libraryStatus').textContent = "Error loading Tesseract. Check console/network or try clearing cache.";
+                    alert("Critical Error: Tesseract.js failed to load. Please check your internet connection and ensure all Tesseract assets are correctly hosted on GitHub Pages.");
+                }
+            })();
+
+            // --- Centralized Readiness Check & App Start ---
+            Promise.all([cvRuntimeInitializedPromise, tessWorkerInitializedPromise])
+                .then(() => {
+                    console.log("All essential libraries (OpenCV, Tesseract) are ready!");
+                    document.getElementById('importBtn').disabled = false;
+                    document.getElementById('libraryStatus').textContent = "Libraries loaded successfully. Ready to build or import!";
+                    buildGrid();
+                })
+                .catch(error => {
+                    console.error("One or more libraries failed to load:", error);
+                    document.getElementById('libraryStatus').textContent = "Failed to load all libraries. Functionality limited.";
+                    alert("Error: Essential libraries could not be loaded. Some features may not work. Check console.");
                 });
-                await tessWorker.load();
-                await tessWorker.loadLanguage('eng');
-                await tessWorker.initialize('eng');
-                console.log("Tesseract is ready!");
-                tessReadyPromiseResolver();
-            } catch (error) {
-                console.error("Failed to initialize Tesseract:", error);
-                document.getElementById('libraryStatus').textContent = "Error loading Tesseract. Please check console & network.";
-                alert("Critical Error: Tesseract.js failed to load. Please check your internet connection and browser console for details. If you're on a local file, try a web server.");
-            }
-        })();
-
-        // --- Centralized Readiness Check & App Start ---
-        // Wait for both libraries to be ready before enabling functionality
-        Promise.all([cvRuntimeInitializedPromise, tessWorkerInitializedPromise])
-            .then(() => {
-                console.log("All essential libraries (OpenCV, Tesseract) are ready!");
-                document.getElementById('importBtn').disabled = false; // Enable the import button
-                document.getElementById('libraryStatus').textContent = "Libraries loaded successfully. Ready to build or import!";
-                buildGrid(); // Build the initial grid only after libraries are ready
-            })
-            .catch(error => {
-                console.error("One or more libraries failed to load:", error);
-                document.getElementById('libraryStatus').textContent = "Failed to load all libraries. Functionality limited.";
-                alert("Error: Essential libraries could not be loaded. Some features may not work. Check console.");
-            });
+        }); // End of DOMContentLoaded listener
 
 
         // --- KenKen Builder (Manual Input) Logic ---
@@ -228,8 +220,8 @@
             const table = document.getElementById("grid");
             table.innerHTML = '';
             cages = []; selectedCells = []; selectedOp = null; clearOpButtons();
-            grid = []; // Reset internal grid reference
-            initialBoardState = Array(size).fill(0).map(() => Array(size).fill(0)); // Reset initial numbers
+            grid = [];
+            initialBoardState = Array(size).fill(0).map(() => Array(size).fill(0));
 
             for (let r = 0; r < size; r++) {
                 const tr = document.createElement("tr");
@@ -246,7 +238,7 @@
                 table.appendChild(tr);
                 grid.push(row);
             }
-            refreshGrid(); // Apply default borders and clear content
+            refreshGrid();
         }
 
         function toggleCell(td) {
@@ -291,13 +283,11 @@
                 return;
             }
 
-            const currentCageCells = [...selectedCells]; // Create a copy
+            const currentCageCells = [...selectedCells];
 
-            // Overwrite any existing cage that overlaps
             const newSet = new Set(currentCageCells.map(c => c + ""));
             cages = cages.filter(c => !c.cells.some(cell => newSet.has(cell + "")));
 
-            // Sort cells for consistent cage representation
             currentCageCells.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
 
             cages.push({ cells: currentCageCells, target: targetInput, op: selectedOp });
@@ -310,20 +300,17 @@
         }
 
         function refreshGrid() {
-            // Clear all visual aspects and reset content based on initialBoardState
             for (let r = 0; r < size; r++) {
                 for (let c = 0; c < size; c++) {
                     const td = grid[r][c];
                     td.classList.remove("selected");
-                    td.textContent = initialBoardState[r][c] !== 0 ? initialBoardState[r][c] : ''; // Re-apply initial numbers
+                    td.textContent = initialBoardState[r][c] !== 0 ? initialBoardState[r][c] : '';
                     td.querySelector(".cage-label")?.remove();
-                    td.style.border = "1px solid #444"; // Reset to default thin border
+                    td.style.border = "1px solid #444";
                 }
             }
 
-            // Apply cage labels based on the cages array
             cages.forEach((cage) => {
-                // Find the top-leftmost cell in the cage for the label
                 if (cage.cells.length > 0) {
                     const [topmostR, leftmostC] = cage.cells.reduce((minCell, currentCell) => {
                         if (currentCell[0] < minCell[0]) return currentCell;
@@ -341,7 +328,7 @@
                     label.textContent = cage.target + cage.op;
                 }
             });
-            updateCageBorders(); // Update borders based on cages array
+            updateCageBorders();
         }
 
         function getCageIndex(r, c) {
@@ -357,7 +344,6 @@
                     const td = grid[r][c];
                     const thisCage = getCageIndex(r, c);
 
-                    // Reset borders to default first
                     td.style.borderTop = '1px solid #444';
                     td.style.borderLeft = '1px solid #444';
                     td.style.borderBottom = '1px solid #444';
@@ -367,7 +353,6 @@
                         continue;
                     }
 
-                    // Apply thicker black border if cell is on a cage boundary
                     const top = (r > 0 && getCageIndex(r - 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
                     const left = (c > 0 && getCageIndex(r, c - 1) !== thisCage) ? '2px solid black' : '1px solid #444';
                     const bottom = (r < size - 1 && getCageIndex(r + 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
@@ -383,15 +368,13 @@
 
         // --- KenKen Solver Logic ---
         function solve() {
-            const board = initialBoardState.map(row => [...row]); // Start with pre-filled numbers
+            const board = initialBoardState.map(row => [...row]);
 
             function isValid(r, c, val) {
-                // Check row and column for duplicates
                 for (let i = 0; i < size; i++) {
                     if (board[r][i] === val || board[i][c] === val) return false;
                 }
 
-                // Temporarily place the value to check cage constraints
                 board[r][c] = val;
 
                 for (const cage of cages) {
@@ -400,7 +383,6 @@
 
                     const valuesInCage = cage.cells.map(([x, y]) => board[x][y]).filter(v => v !== 0);
 
-                    // Check if all cells in the cage are filled, then evaluate the full cage constraint
                     if (valuesInCage.length === cage.cells.length) {
                         const result = evaluate(valuesInCage, cage.op);
                         if (result === null || result !== parseInt(cage.target)) {
@@ -408,10 +390,8 @@
                             return false;
                         }
                     } else {
-                        // Pruning for partial cages
                         if (cage.op === '=' && valuesInCage.length === 1 && valuesInCage[0] !== parseInt(cage.target)) {
-                            board[r][c] = 0;
-                            return false;
+                            board[r][c] = 0; return false;
                         }
                         if (cage.op === '+' && valuesInCage.reduce((a, b) => a + b, 0) > parseInt(cage.target)) {
                             board[r][c] = 0; return false;
@@ -422,35 +402,33 @@
                     }
                 }
 
-                board[r][c] = 0; // Backtrack temporary placement
+                board[r][c] = 0;
                 return true;
             }
 
             function evaluate(values, op) {
-                // Ensure values are numbers
                 values = values.map(Number);
 
                 if (op === '+') return values.reduce((a, b) => a + b, 0);
                 if (op === '-') {
                     if (values.length === 2) return Math.abs(values[0] - values[1]);
-                    return null; // Invalid for non-2 cell subtraction
+                    return null;
                 }
                 if (op === '×') return values.reduce((a, b) => a * b, 1);
                 if (op === '÷') {
                     if (values.length === 2) {
                         const maxVal = Math.max(...values);
                         const minVal = Math.min(...values);
-                        if (minVal === 0 || maxVal % minVal !== 0) return null; // Avoid division by zero or non-integer results
+                        if (minVal === 0 || maxVal % minVal !== 0) return null;
                         return maxVal / minVal;
                     }
-                    return null; // Invalid for non-2 cell division
+                    return null;
                 }
                 if (op === '=') return values[0];
                 return null;
             }
 
             function backtrack(r = 0, c = 0) {
-                // Find next empty cell
                 while (r < size && board[r][c] !== 0) {
                     if (c === size - 1) {
                         r++;
@@ -460,19 +438,18 @@
                     }
                 }
 
-                if (r === size) return true; // All rows filled, puzzle solved
+                if (r === size) return true;
 
                 for (let val = 1; val <= size; val++) {
                     if (isValid(r, c, val)) {
                         board[r][c] = val;
                         if (backtrack(r, c)) return true;
-                        board[r][c] = 0; // Backtrack
+                        board[r][c] = 0;
                     }
                 }
                 return false;
             }
 
-            // Start the solver
             if (backtrack()) {
                 for (let r = 0; r < size; r++) {
                     for (let c = 0; c < size; c++) {
@@ -501,7 +478,7 @@
             preview.src = URL.createObjectURL(file);
             preview.onload = () => {
                 URL.revokeObjectURL(preview.src);
-                document.getElementById('outputCanvas').style.display = 'none'; // Hide output canvas initially
+                document.getElementById('outputCanvas').style.display = 'none';
             };
         };
 
@@ -512,14 +489,12 @@
                 return;
             }
 
-            // Show UI elements for progress
             document.getElementById('progressBox').style.display = 'block';
             document.getElementById('outputCanvas').style.display = 'block';
 
-            let src = null, gray = null, processed = null, lines = null, dst = null; // Declare Mats for cleanup
+            let src = null, gray = null, processed = null, lines = null, dst = null;
 
             try {
-                // 1. Load image and preprocess
                 setBar(5, 'Loading image...');
                 src = cv.imread(imgElement);
                 gray = new cv.Mat();
@@ -529,12 +504,10 @@
                 processed = new cv.Mat();
                 cv.adaptiveThreshold(gray, processed, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-                // 2. Find lines using HoughLinesP
                 setBar(20, 'Detecting lines (Hough Transform)...');
                 lines = new cv.Mat();
                 cv.HoughLinesP(processed, lines, 1, Math.PI / 180, 50, 40, 5);
 
-                // 3. Filter and cluster lines to identify major grid lines
                 setBar(30, 'Clustering grid lines...');
                 let horizontalLines = [];
                 let verticalLines = [];
@@ -580,7 +553,6 @@
                 console.log("Detected Horizontal Lines (Y-coords):", uniqueH);
                 console.log("Detected Vertical Lines (X-coords):", uniqueV);
 
-                // Determine grid size
                 if (uniqueH.length < 2 || uniqueV.length < 2) {
                     throw new Error("Could not detect enough grid lines. Ensure image is clear and well-aligned.");
                 }
@@ -591,12 +563,10 @@
                 size = detectedSize;
                 document.getElementById('sizeInput').value = size;
 
-                // Initialize internal state variables for the new grid size
                 cages = [];
                 initialBoardState = Array(size).fill(0).map(() => Array(size).fill(0));
 
 
-                // 4. Determine cell coordinates
                 setBar(40, 'Mapping cell coordinates...');
                 const cellCoords = [];
                 for (let r = 0; r < size; r++) {
@@ -609,7 +579,6 @@
                     }
                 }
 
-                // 5. Create a border map by analyzing pixel density along cell edges in `processed` image
                 setBar(50, 'Analyzing cell borders...');
                 const borderMap = Array(size).fill(0).map(() => Array(size).fill(0).map(() => ({
                     top: false, bottom: false, left: false, right: false
@@ -639,7 +608,7 @@
                                         }
                                     }
                                 }
-                            } else { // Vertical
+                            } else {
                                 for (let y = y_start; y < y_end; y++) {
                                     for (let dx = -Math.floor(lineCheckWidth/2); dx <= Math.ceil(lineCheckWidth/2); dx++) {
                                         const checkX = x_start + dx;
@@ -655,7 +624,7 @@
                             return totalPixels > 0 ? (linePixels / totalPixels) : 0;
                         };
 
-                        if (r > 0) { // Check top border
+                        if (r > 0) {
                             const density = checkLineSegment(cell.x, cell.y, cell.x + cell.width, cell.y, true);
                             if (density > lineDensityThreshold) {
                                 borderMap[r][c].top = true;
@@ -663,7 +632,7 @@
                             }
                         }
 
-                        if (c > 0) { // Check left border
+                        if (c > 0) {
                             const density = checkLineSegment(cell.x, cell.y, cell.x, cell.y + cell.height, false);
                             if (density > lineDensityThreshold) {
                                 borderMap[r][c].left = true;
@@ -674,12 +643,10 @@
                 }
                 console.log("Border Map (derived from pixel density):", borderMap);
 
-                // 6. Perform OCR on the entire image for all text/words
                 setBar(70, 'Performing OCR on image...');
                 const { data: { words: allWords } } = await tessWorker.recognize(imgElement);
                 console.log("All Recognized Words with BBoxes:", allWords);
 
-                // 7. Map OCR words to grid cells and parse cage labels/numbers
                 setBar(80, 'Mapping OCR results to grid cells...');
                 const cellContents = Array(size).fill(0).map(() => Array(size).fill(0).map(() => ({ labels: [], numbers: [] })));
 
@@ -707,7 +674,6 @@
                 }
                 console.log("Cell Contents (from OCR mapping):", cellContents);
 
-                // 8. Reconstruct Cages using Flood Fill and Border Map
                 setBar(90, 'Reconstructing cages...');
                 const visitedCellsForCages = Array(size).fill(false).map(() => Array(size).fill(false));
                 cages = [];
@@ -722,10 +688,10 @@
                         cageCells.push([currR, currC]);
 
                         const neighbors = [
-                            { dr: -1, dc: 0, dir: 'top' }, // Up
-                            { dr: 1, dc: 0, dir: 'bottom' }, // Down
-                            { dr: 0, dc: -1, dir: 'left' }, // Left
-                            { dr: 0, dc: 1, dir: 'right' }  // Right
+                            { dr: -1, dc: 0, dir: 'top' },
+                            { dr: 1, dc: 0, dir: 'bottom' },
+                            { dr: 0, dc: -1, dir: 'left' },
+                            { dr: 0, dc: 1, dir: 'right' }
                         ];
 
                         for (const { dr, dc, dir } of neighbors) {
@@ -765,22 +731,19 @@
                 console.log("Reconstructed Cages (robust):", cages);
                 console.log("Initial Board State (from OCR numbers):", initialBoardState);
 
-                // 9. Update UI with reconstructed grid and cages
                 const currentSizeVal = size;
                 const currentCages = [...cages];
                 const currentInitialBoardState = initialBoardState.map(row => [...row]);
 
                 document.getElementById('sizeInput').value = currentSizeVal;
-                buildGrid(); // Recreates HTML table, resets initialBoardState and cages
-                
-                // Restore OCR-detected values after buildGrid resets them
+                buildGrid();
+
                 size = currentSizeVal;
                 cages = currentCages;
                 initialBoardState = currentInitialBoardState;
 
-                refreshGrid(); // Redraw with imported data
+                refreshGrid();
 
-                // Visual confirmation on outputCanvas
                 dst = cv.imread(imgElement);
                 for (let i = 0; i < uniqueH.length; i++) {
                     cv.line(dst, new cv.Point(uniqueV[0], uniqueH[i]), new cv.Point(uniqueV[uniqueV.length - 1], uniqueH[i]), new cv.Scalar(0, 255, 0, 255), 1);
@@ -823,7 +786,6 @@
                 alert("Image import failed. Check console for errors. This is a complex task and robust handling for all image types is difficult.");
                 setBar(0, 'Import Failed!');
             } finally {
-                // Proper memory cleanup for OpenCV Mats
                 if (src) src.delete();
                 if (gray) gray.delete();
                 if (processed) processed.delete();
@@ -838,12 +800,10 @@
             }
         }
 
-        // Helper function to parse cage labels like "8+" or "3" or "1-"
         function parseCageLabel(text) {
             let target = null;
             let op = null;
 
-            // Remove spaces
             text = text.replace(/\s/g, '');
 
             const ops = ['+', '-', '×', 'x', '*', '÷', '/', '='];
