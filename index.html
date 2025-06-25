@@ -1,42 +1,42 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>KenKen Builder • OCR Import • Solver</title>
-  <style>
-    body { font-family: sans-serif; text-align: center; margin: 20px; }
-    table { border-collapse: collapse; margin: 10px auto; }
-    td {
-      width: 50px; height: 50px;
-      text-align: center; font-size: 20px; position: relative;
-      cursor: pointer; padding: 0;
-    }
-    .selected { background: #cce5ff; }
-    .cage-label {
-      position: absolute;
-      top: 0; left: 2px;
-      font-size: 12px;
-      color: #666;
-    }
-    .op-button {
-      padding: 5px 10px;
-      margin: 2px;
-      font-size: 16px;
-      cursor: pointer;
-    }
-    .op-button.selected {
-      background-color: #007bff;
-      color: white;
-      border: none;
-    }
-    input[type=number] { width: 60px; }
-    button { margin: 5px; padding: 5px 10px; }
-    #preview { max-width: 300px; max-height: 300px; margin-top: 10px; border: 1px solid #aaa; }
-    #progressBox { width: 300px; margin: 10px auto; border: 1px solid #666; height: 16px; }
-    #bar { height: 100%; width: 0; background: #28a745; }
-  </style>
-  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <meta charset="UTF-8" />
+  <title>KenKen Builder • OCR Import • Solver</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin: 20px; }
+    table { border-collapse: collapse; margin: 10px auto; }
+    td {
+      width: 50px; height: 50px;
+      text-align: center; font-size: 20px; position: relative;
+      cursor: pointer; padding: 0;
+    }
+    .selected { background: #cce5ff; }
+    .cage-label {
+      position: absolute;
+      top: 0; left: 2px;
+      font-size: 12px;
+      color: #666;
+    }
+    .op-button {
+      padding: 5px 10px;
+      margin: 2px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .op-button.selected {
+      background-color: #007bff;
+      color: white;
+      border: none;
+    }
+    input[type=number] { width: 60px; }
+    button { margin: 5px; padding: 5px 10px; }
+    #preview { max-width: 300px; max-height: 300px; margin-top: 10px; border: 1px solid #aaa; }
+    #progressBox { width: 300px; margin: 10px auto; border: 1px solid #666; height: 16px; }
+    #bar { height: 100%; width: 0; background: #28a745; }
+  </style>
+  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 </head>
 <body>
 
@@ -46,14 +46,14 @@
 <button onclick="buildGrid()">Build Grid</button>
 
 <div id="editor" style="margin-top:10px">
-  <label>Target <input id="targetInput" type="number"></label>
-  <span>Operator:</span>
-  <button class="op-button" onclick="selectOp(this,'+')">+</button>
-  <button class="op-button" onclick="selectOp(this,'-')">-</button>
-  <button class="op-button" onclick="selectOp(this,'×')">×</button>
-  <button class="op-button" onclick="selectOp(this,'÷')">÷</button>
-  <button class="op-button" onclick="selectOp(this,'=')">=</button>
-  <button onclick="addCage()">Add Cage</button>
+  <label>Target <input id="targetInput" type="number"></label>
+  <span>Operator:</span>
+  <button class="op-button" onclick="selectOp(this,'+')">+</button>
+  <button class="op-button" onclick="selectOp(this,'-')">-</button>
+  <button class="op-button" onclick="selectOp(this,'×')">×</button>
+  <button class="op-button" onclick="selectOp(this,'÷')">÷</button>
+  <button class="op-button" onclick="selectOp(this,'=')">=</button>
+  <button onclick="addCage()">Add Cage</button>
 </div>
 
 <hr>
@@ -61,7 +61,7 @@
 <input type="file" id="imgInput" accept="image/*">
 <br><img id="preview" alt="preview">
 <div id="progressBox" style="display:none"><div id="bar"></div></div>
-<p><button id="importBtn" disabled>Import This Image</button></p>
+<p><button id="importBtn" disabled onclick="importImage()">Import This Image</button></p>
 
 <table id="grid"></table>
 <button onclick="solve()">Solve</button>
@@ -70,216 +70,341 @@
 let cvReady = false, tessReady = false, tessWorker = null;
 let size = 5, grid = [], cages = [], selectedCells = [], selectedOp = null;
 
+// OpenCV callback
 cv.onRuntimeInitialized = () => {
-  cvReady = true;
-  checkReady();
+  cvReady = true;
+  checkReady();
 };
 
+// Tesseract initialization
 (async () => {
-  tessWorker = Tesseract.createWorker({ logger: m => console.log(m) });
-  await tessWorker.load();
-  await tessWorker.loadLanguage('eng');
-  await tessWorker.initialize('eng');
-  tessReady = true;
-  checkReady();
+  tessWorker = Tesseract.createWorker({
+    logger: m => {
+        console.log(m);
+        // Update progress bar based on Tesseract's messages
+        if (m.status === 'recognizing text' || m.status === 'initializing Tesseract') {
+            setBar(m.progress * 100);
+        } else if (m.status === 'loading tesseract core' || m.status === 'loading language traineddata') {
+             setBar(m.progress * 100);
+        }
+    }
+});
+  await tessWorker.load();
+  await tessWorker.loadLanguage('eng');
+  await tessWorker.initialize('eng');
+  tessReady = true;
+  checkReady();
 })();
 
 function checkReady() {
-  if (cvReady && tessReady) {
-    document.getElementById('importBtn').disabled = false;
-  }
+  if (cvReady && tessReady) {
+    document.getElementById('importBtn').disabled = false;
+    console.log("OpenCV and Tesseract are both ready!");
+  }
 }
 
 function buildGrid() {
-  size = parseInt(document.getElementById("sizeInput").value);
-  const table = document.getElementById("grid");
-  table.innerHTML = '';
-  cages = []; selectedCells = []; selectedOp = null; clearOpButtons(); grid = [];
+  size = parseInt(document.getElementById("sizeInput").value);
+  const table = document.getElementById("grid");
+  table.innerHTML = '';
+  cages = []; selectedCells = []; selectedOp = null; clearOpButtons(); grid = [];
 
-  for (let r = 0; r < size; r++) {
-    const tr = document.createElement("tr");
-    const row = [];
-    for (let c = 0; c < size; c++) {
-      const td = document.createElement("td");
-      td.dataset.row = r;
-      td.dataset.col = c;
-      td.addEventListener("click", () => toggleCell(td));
-      td.textContent = '';
-      td.style.border = "1px solid #444";
-      tr.appendChild(td);
-      row.push(td);
-    }
-    table.appendChild(tr);
-    grid.push(row);
-  }
+  for (let r = 0; r < size; r++) {
+    const tr = document.createElement("tr");
+    const row = [];
+    for (let c = 0; c < size; c++) {
+      const td = document.createElement("td");
+      td.dataset.row = r;
+      td.dataset.col = c;
+      td.addEventListener("click", () => toggleCell(td));
+      td.textContent = '';
+      td.style.border = "1px solid #444";
+      tr.appendChild(td);
+      row.push(td);
+    }
+    table.appendChild(tr);
+    grid.push(row);
+  }
+    updateCageBorders(); // Initialize borders for an empty grid
 }
 
 function toggleCell(td) {
-  const r = parseInt(td.dataset.row);
-  const c = parseInt(td.dataset.col);
-  const i = selectedCells.findIndex(cell => cell[0] === r && cell[1] === c);
-  if (i >= 0) {
-    selectedCells.splice(i, 1);
-    td.classList.remove("selected");
-  } else {
-    selectedCells.push([r, c]);
-    td.classList.add("selected");
-  }
+  const r = parseInt(td.dataset.row);
+  const c = parseInt(td.dataset.col);
+  const i = selectedCells.findIndex(cell => cell[0] === r && cell[1] === c);
+  if (i >= 0) {
+    selectedCells.splice(i, 1);
+    td.classList.remove("selected");
+  } else {
+    selectedCells.push([r, c]);
+    td.classList.add("selected");
+  }
 }
 
 function selectOp(button, op) {
-  selectedOp = op;
-  clearOpButtons();
-  button.classList.add("selected");
+  selectedOp = op;
+  clearOpButtons();
+  button.classList.add("selected");
 }
 
 function clearOpButtons() {
-  document.querySelectorAll('.op-button').forEach(btn => {
-    btn.classList.remove("selected");
-  });
+  document.querySelectorAll('.op-button').forEach(btn => {
+    btn.classList.remove("selected");
+  });
 }
 
 function addCage() {
-  const target = parseInt(document.getElementById("targetInput").value);
-  if (!target || selectedCells.length === 0 || !selectedOp) return alert("Fill target, operator, and select cells");
+  const targetInput = document.getElementById("targetInput").value;
+  const target = parseInt(targetInput);
 
-  // Overwrite any existing cage that overlaps
-  const newSet = new Set(selectedCells.map(c => c + ""));
-  cages = cages.filter(c => !c.cells.some(cell => newSet.has(cell + "")));
-  cages.push({ cells: [...selectedCells], target, op: selectedOp });
+  if (selectedCells.length === 0) {
+      alert("Please select cells for the cage.");
+      return;
+  }
+  if (!selectedOp) {
+      alert("Please select an operator.");
+      return;
+  }
+  if (selectedOp !== '=' && (!targetInput || isNaN(target))) {
+      alert("Please enter a valid target number for the cage.");
+      return;
+  }
 
-  selectedCells = [];
-  refreshGrid();
-  updateCageBorders();
+  // Overwrite any existing cage that overlaps
+  const newSet = new Set(selectedCells.map(c => c + ""));
+  cages = cages.filter(c => !c.cells.some(cell => newSet.has(cell + "")));
+  cages.push({ cells: [...selectedCells], target: targetInput, op: selectedOp }); // Store target as string if '='
+
+  selectedCells = [];
+  document.getElementById("targetInput").value = ''; // Clear target input
+  clearOpButtons(); // Clear operator selection
+  selectedOp = null; // Reset selected operator
+  refreshGrid();
+  updateCageBorders();
 }
 
 function refreshGrid() {
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
-      const td = grid[r][c];
-      td.classList.remove("selected");
-      td.textContent = "";
-      td.querySelector(".cage-label")?.remove();
-    }
-  }
-  cages.forEach((cage, index) => {
-    cage.cells.forEach(([r, c], i) => {
-      const td = grid[r][c];
-      td.classList.add(`cage-${index}`);
-      if (i === 0) {
-        const label = document.createElement("div");
-        label.className = "cage-label";
-        label.textContent = cage.target + cage.op;
-        td.appendChild(label);
-      }
-    });
-  });
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const td = grid[r][c];
+      td.classList.remove("selected");
+      td.textContent = "";
+      td.querySelector(".cage-label")?.remove(); // Use optional chaining
+      // Reset borders to default before applying cage-specific ones
+      td.style.border = "1px solid #444";
+    }
+  }
+  cages.forEach((cage, index) => {
+    cage.cells.forEach(([r, c], i) => {
+      const td = grid[r][c];
+      td.classList.add(`cage-${index}`);
+      if (i === 0) {
+        const label = document.createElement("div");
+        label.className = "cage-label";
+        label.textContent = cage.target + cage.op;
+        td.appendChild(label);
+      }
+    });
+  });
 }
 
 function getCageIndex(r, c) {
-  for (let i = 0; i < cages.length; i++) {
-    if (cages[i].cells.some(([x, y]) => x === r && y === c)) return i;
-  }
-  return null;
+  for (let i = 0; i < cages.length; i++) {
+    if (cages[i].cells.some(([x, y]) => x === r && y === c)) return i;
+  }
+  return null;
 }
 
 function updateCageBorders() {
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
-      const td = grid[r][c];
-      const thisCage = getCageIndex(r, c);
-      if (thisCage === null) continue;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const td = grid[r][c];
+      const thisCage = getCageIndex(r, c);
 
-      const top = (r > 0 && getCageIndex(r - 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
-      const left = (c > 0 && getCageIndex(r, c - 1) !== thisCage) ? '2px solid black' : '1px solid #444';
-      const bottom = (r < size - 1 && getCageIndex(r + 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
-      const right = (c < size - 1 && getCageIndex(r, c + 1) !== thisCage) ? '2px solid black' : '1px solid #444';
+      // Reset borders to default first
+      td.style.borderTop = '1px solid #444';
+      td.style.borderLeft = '1px solid #444';
+      td.style.borderBottom = '1px solid #444';
+      td.style.borderRight = '1px solid #444';
 
-      td.style.borderTop = top;
-      td.style.borderLeft = left;
-      td.style.borderBottom = bottom;
-      td.style.borderRight = right;
-    }
-  }
+      if (thisCage === null) continue; // If not part of any cage, keep default borders
+
+      const top = (r > 0 && getCageIndex(r - 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
+      const left = (c > 0 && getCageIndex(r, c - 1) !== thisCage) ? '2px solid black' : '1px solid #444';
+      const bottom = (r < size - 1 && getCageIndex(r + 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
+      const right = (c < size - 1 && getCageIndex(r, c + 1) !== thisCage) ? '2px solid black' : '1px solid #444';
+
+      td.style.borderTop = top;
+      td.style.borderLeft = left;
+      td.style.borderBottom = bottom;
+      td.style.borderRight = right;
+    }
+  }
 }
 
 function solve() {
-  const board = Array.from({ length: size }, () => Array(size).fill(0));
+  const board = Array.from({ length: size }, () => Array(size).fill(0));
 
-  function isValid(r, c, val) {
-    for (let i = 0; i < size; i++) {
-      if (board[r][i] === val || board[i][c] === val) return false;
-    }
+  function isValid(r, c, val) {
+    // Check row and column for duplicates
+    for (let i = 0; i < size; i++) {
+      if (board[r][i] === val || board[i][c] === val) return false;
+    }
 
-    board[r][c] = val;
+    // Temporarily place the value to check cage constraints
+    board[r][c] = val;
 
-    for (const cage of cages) {
-      const values = cage.cells.map(([x, y]) => board[x][y]).filter(v => v !== 0);
-      if (values.length === cage.cells.length) {
-        const result = evaluate(values, cage.op);
-        if (result !== cage.target) {
-          board[r][c] = 0;
-          return false;
+    for (const cage of cages) {
+      // Check if the current cell (r, c) is part of this cage
+      const isCellInCage = cage.cells.some(([cx, cy]) => cx === r && cy === c);
+      if (!isCellInCage) continue; // Skip if the current cell is not in this cage
+
+      const valuesInCage = cage.cells.map(([x, y]) => board[x][y]).filter(v => v !== 0);
+
+      // If all cells in the cage are filled, check if the operation holds
+      if (valuesInCage.length === cage.cells.length) {
+        const result = evaluate(valuesInCage, cage.op);
+        if (result !== parseInt(cage.target)) { // Compare with parsed target
+          board[r][c] = 0; // Backtrack
+          return false;
+        }
+      } else {
+            // Early exit for single-cell cages if value doesn't match target
+            if (cage.op === '=' && valuesInCage.length === 1 && valuesInCage[0] !== parseInt(cage.target)) {
+                board[r][c] = 0;
+                return false;
+            }
+            // For other operations, if intermediate values violate the rules (e.g., division by zero, negative in subtraction
+            // or if a sum/product already exceeds the target for positive operations and numbers)
+            // This is a simplified check, full validation is more complex.
+            if (cage.op === '÷' && valuesInCage.includes(0)) { // Prevent division by zero prematurely
+                board[r][c] = 0;
+                return false;
+            }
         }
-      } else if (cage.op === '=' && values[0] && values[0] !== cage.target) {
-        board[r][c] = 0;
-        return false;
-      }
+    }
+
+    board[r][c] = 0; // Remove the temporary value
+    return true;
+  }
+
+  function evaluate(values, op) {
+    if (op === '+') return values.reduce((a, b) => a + b, 0);
+    if (op === '-') {
+        // For subtraction, find the difference between the two numbers (absolute value)
+        if (values.length === 2) return Math.abs(values[0] - values[1]);
+        // More robust handling for multiple values in subtraction might be needed depending on KenKen rules
+        // For now, assume 2-cell subtraction.
+        return NaN; // Indicate invalid state for subtraction with other than 2 values
     }
-
-    board[r][c] = 0;
-    return true;
-  }
-
-  function evaluate(values, op) {
-    if (op === '+') return values.reduce((a, b) => a + b, 0);
-    if (op === '-') return Math.abs(values[0] - values[1]);
-    if (op === '×') return values.reduce((a, b) => a * b, 1);
-    if (op === '÷') return Math.max(...values) / Math.min(...values);
-    if (op === '=') return values[0];
-  }
-
-  function backtrack(r = 0, c = 0) {
-    if (r === size) return true;
-    const [nextR, nextC] = c === size - 1 ? [r + 1, 0] : [r, c + 1];
-
-    for (let val = 1; val <= size; val++) {
-      if (isValid(r, c, val)) {
-        board[r][c] = val;
-        if (backtrack(nextR, nextC)) return true;
-        board[r][c] = 0;
-      }
+    if (op === '×') return values.reduce((a, b) => a * b, 1);
+    if (op === '÷') {
+        // For division, find the largest and smallest and divide
+        if (values.length === 2) {
+            const maxVal = Math.max(...values);
+            const minVal = Math.min(...values);
+            if (minVal === 0 || maxVal % minVal !== 0) return NaN; // Avoid division by zero or non-integer results
+            return maxVal / minVal;
+        }
+        return NaN; // Indicate invalid state for division with other than 2 values
     }
-    return false;
-  }
+    if (op === '=') return values[0];
+    return NaN; // Should not happen
+  }
 
-  if (backtrack()) {
-    for (let r = 0; r < size; r++) {
-      for (let c = 0; c < size; c++) {
-        grid[r][c].textContent = board[r][c];
-      }
-    }
-  } else {
-    alert("No solution found.");
-  }
+  function backtrack(r = 0, c = 0) {
+    if (r === size) return true; // All rows filled, puzzle solved
+
+    const [nextR, nextC] = c === size - 1 ? [r + 1, 0] : [r, c + 1];
+
+    for (let val = 1; val <= size; val++) {
+      if (isValid(r, c, val)) {
+        board[r][c] = val;
+        if (backtrack(nextR, nextC)) return true;
+        board[r][c] = 0; // Backtrack
+      }
+    }
+    return false;
+  }
+
+  if (backtrack()) {
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        grid[r][c].textContent = board[r][c];
+      }
+    }
+    alert("Solution found!");
+  } else {
+    alert("No solution found for this KenKen puzzle.");
+  }
 }
 
 // Minimal progress bar logic
 function setBar(pct) {
-  document.getElementById('progressBox').style.display = 'block';
-  document.getElementById('bar').style.width = pct + '%';
+  document.getElementById('progressBox').style.display = 'block';
+  document.getElementById('bar').style.width = pct + '%';
 }
 
-// TODO: Add image processing & OCR here.
-
+// Image input change handler to display preview
 document.getElementById('imgInput').onchange = e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const preview = document.getElementById('preview');
-  preview.src = URL.createObjectURL(file);
-  preview.onload = () => URL.revokeObjectURL(preview.src);
+  const file = e.target.files[0];
+  if (!file) return;
+  const preview = document.getElementById('preview');
+  preview.src = URL.createObjectURL(file);
+  preview.onload = () => URL.revokeObjectURL(preview.src);
 };
 
+
+// Function to import and process the image with Tesseract and OpenCV
+async function importImage() {
+    const imgElement = document.getElementById('preview');
+    if (!imgElement.src || imgElement.src.startsWith('blob:null')) {
+        alert("Please select an image first for import.");
+        return;
+    }
+
+    setBar(0); // Reset progress bar
+    document.getElementById('progressBox').style.display = 'block';
+
+    try {
+        // Step 1: Use Tesseract.js for OCR
+        document.getElementById('bar').textContent = 'Recognizing text...';
+        const { data: { text, words } } = await tessWorker.recognize(imgElement);
+        console.log("OCR Result Text:", text);
+        console.log("OCR Result Words:", words);
+
+        // Step 2: Use OpenCV.js for image processing (placeholder)
+        document.getElementById('bar').textContent = 'Processing image with OpenCV...';
+        let src = cv.imread(imgElement);
+        let gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, cv.COLOR_RGBA2GRAY); // Corrected argument for cv.COLOR_RGBA2GRAY
+        // You would add more OpenCV steps here to:
+        // 1. Detect grid lines
+        // 2. Extract individual cells
+        // 3. Perform further OCR on specific cell regions
+        // 4. Parse detected numbers and operators to populate the 'cages' array
+
+        // For demonstration, let's just show a basic OpenCV output (if you have a canvas)
+        // cv.imshow('outputCanvas', gray); // Requires a <canvas id="outputCanvas"></canvas> in your HTML
+
+        src.delete(); // Clean up OpenCV Mats
+        gray.delete();
+
+        alert("Image import process initiated. OCR result logged to console. Further KenKen parsing logic needs to be implemented here.");
+        document.getElementById('bar').textContent = 'Import Complete!';
+
+    } catch (error) {
+        console.error("Image import failed:", error);
+        alert("Image import failed. Check console for errors.");
+        document.getElementById('bar').textContent = 'Import Failed!';
+    } finally {
+        // Hide progress bar after a short delay
+        setTimeout(() => {
+            document.getElementById('progressBox').style.display = 'none';
+            document.getElementById('bar').style.width = '0%';
+        }, 1000);
+    }
+}
 </script>
 </body>
 </html>
