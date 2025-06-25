@@ -120,9 +120,7 @@
         }
         hr { border: 0; height: 1px; background-image: linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0)); margin: 30px auto; width: 80%; }
     </style>
-    <!-- OpenCV script -->
-    <script src="https://docs.opencv.org/4.x/opencv.js"></script>
-    <!-- Tesseract.js library (main script) - NOW USING V3.0.3 -->
+    <!-- Tesseract.js library (main script) - USING V3.0.3 -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@3.0.3/dist/tesseract.min.js"></script>
 </head>
 <body>
@@ -157,10 +155,36 @@
     <button onclick="solve()">Solve</button>
 
     <script>
+        // --- OpenCV.js Initialization: Global Module object for dynamic loading ---
         let cvReadyPromiseResolver;
-        let cvRuntimeInitializedPromise = new Promise(resolve => {
-            cvReadyPromiseResolver = resolve;
+        let cvRuntimeInitializedPromise = new Promise((resolve, reject) => {
+            cvReadyPromiseResolver = { resolve, reject }; // Store both resolve and reject
         });
+
+        // Define the Module object for OpenCV.js in the global scope.
+        // This MUST be defined before the opencv.js script is loaded.
+        var Module = {
+            onRuntimeInitialized: function() {
+                console.log("OpenCV (Module.onRuntimeInitialized) is ready!");
+                cvReadyPromiseResolver.resolve(); // Resolve the promise indicating OpenCV is ready
+            }
+        };
+
+        // Dynamically load OpenCV.js script.
+        // This ensures the Module object is defined first and then the script is fetched.
+        (function loadOpenCvScript() {
+            const script = document.createElement('script');
+            // FIX: Reverted to a known good, official CDN link for OpenCV.js 4.7.0 for stability.
+            script.src = "https://docs.opencv.org/4.7.0/opencv.js"; 
+            script.async = true; // Load asynchronously
+            script.onerror = (e) => {
+                console.error("Failed to load OpenCV.js script:", e);
+                // Explicitly reject the promise if the script tag fails to load
+                cvReadyPromiseResolver.reject(new Error(`Failed to load OpenCV.js script from CDN. Event: ${JSON.stringify(e)}. Check network/browser console for details.`));
+            };
+            document.head.appendChild(script);
+        })();
+
 
         let tessReadyPromiseResolver;
         let tessWorkerInitializedPromise = new Promise(resolve => {
@@ -170,22 +194,15 @@
         let tessWorker = null;
         let size = 6, grid = [], cages = [], selectedCells = [], selectedOp = null;
         let initialBoardState = [];
+        let selectedFile = null; // Store the file object globally
 
         // --- Library Initialization wrapped in DOMContentLoaded ---
         document.addEventListener('DOMContentLoaded', () => {
             console.log("DOMContentLoaded fired. Starting library initialization.");
 
-            // OpenCV's callback for when its WASM module is fully loaded and ready
-            cv.onRuntimeInitialized = () => {
-                console.log("OpenCV (cv.onRuntimeInitialized) is ready!");
-                cvReadyPromiseResolver();
-            };
-
             // Tesseract worker initialization
             (async () => {
                 try {
-                    // FIX: Corrected Tesseract.createWorker syntax as per Tesseract.js v3.x.x API
-                    // Argument order: langs, oem, options
                     tessWorker = Tesseract.createWorker(
                         'eng', // 1st argument: langs (language)
                         null,  // 2nd argument: oem (OCR Engine Mode - null for default)
@@ -224,7 +241,7 @@
             })();
 
             // --- Centralized Readiness Check & App Start ---
-            Promise.all([cvReadyPromiseResolver, tessWorkerInitializedPromise])
+            Promise.all([cvRuntimeInitializedPromise, tessWorkerInitializedPromise])
                 .then(() => {
                     console.log("All essential libraries (OpenCV, Tesseract) are ready!");
                     document.getElementById('importBtn').disabled = false;
@@ -244,7 +261,7 @@
             size = parseInt(document.getElementById("sizeInput").value);
             const table = document.getElementById("grid");
             table.innerHTML = '';
-            cages = []; selectedCells = []; selectedOp = null; clearOpButtons();
+            cages = []; selectedCells = [], selectedOp = null; clearOpButtons();
             grid = [];
             initialBoardState = Array(size).fill(0).map(() => Array(size).fill(0));
 
@@ -498,34 +515,73 @@
 
         document.getElementById('imgInput').onchange = e => {
             const file = e.target.files[0];
-            if (!file) return;
+            if (!file) {
+                selectedFile = null;
+                return;
+            }
+            selectedFile = file; // Store the file object
             const preview = document.getElementById('preview');
             preview.src = URL.createObjectURL(file);
             preview.onload = () => {
-                URL.revokeObjectURL(preview.src);
-                document.getElementById('outputCanvas').style.display = 'none';
+                // The Blob URL for the preview image is now managed directly by importImage
+                // where it's revoked after cv.imread uses the raw bytes.
             };
         };
 
         async function importImage() {
             const imgElement = document.getElementById('preview');
-            if (!imgElement.src || imgElement.src.startsWith('blob:null')) {
+            if (!selectedFile) { // Check if a file was actually selected
                 alert("Please select an image first for import.");
                 return;
             }
 
+            // Show UI elements for progress
             document.getElementById('progressBox').style.display = 'block';
             document.getElementById('outputCanvas').style.display = 'block';
 
-            let src = null, gray = null, processed = null, lines = null, dst = null;
+            let src = null, gray = null, processed = null, lines = null, dst = null; // Declare Mats for cleanup
 
             try {
-                setBar(5, 'Loading image...');
-                src = cv.imread(imgElement);
+                setBar(5, 'Loading image into canvas...');
+
+                // Create a temporary canvas to draw the image for cv.imread
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+
+                // Wait for the image to load on the imgElement
+                await new Promise((resolve, reject) => {
+                    if (imgElement.complete && imgElement.naturalWidth !== 0) { // Already loaded
+                        resolve();
+                    } else {
+                        imgElement.onload = () => resolve();
+                        imgElement.onerror = () => reject(new Error("Image failed to load onto imgElement."));
+                    }
+                });
+
+                // Set canvas dimensions to match the image
+                tempCanvas.width = imgElement.naturalWidth;
+                tempCanvas.height = imgElement.naturalHeight;
+
+                // Draw the image onto the temporary canvas
+                tempCtx.drawImage(imgElement, 0, 0, tempCanvas.width, tempCanvas.height);
+
+                // Use cv.imread directly from the canvas
+                src = cv.imread(tempCanvas);
+
+                // Clean up the temporary canvas
+                tempCanvas.remove();
+
+                // Revoke the Blob URL from the preview img element
+                if (imgElement.src && imgElement.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(imgElement.src);
+                    imgElement.src = ""; // Clear src to prevent re-using invalid URL
+                }
+
+
+                setBar(10, 'Applying adaptive threshold...');
                 gray = new cv.Mat();
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
 
-                setBar(10, 'Applying adaptive threshold...');
                 processed = new cv.Mat();
                 cv.adaptiveThreshold(gray, processed, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
@@ -670,6 +726,7 @@
 
                 setBar(70, 'Performing OCR on image...');
                 // The actual OCR step - this is where the lag might occur
+                // Pass the image element, as Tesseract.js can work directly with it after it's rendered
                 const { data: { words: allWords } } = await tessWorker.recognize(imgElement);
                 console.log("All Recognized Words with BBoxes:", allWords);
 
@@ -770,7 +827,17 @@
 
                 refreshGrid();
 
-                dst = cv.imread(imgElement);
+                // To display processed image on canvas:
+                const outputCanvas = document.getElementById('outputCanvas');
+                if (outputCanvas) {
+                    outputCanvas.width = src.cols;
+                    outputCanvas.height = src.rows;
+                    dst = src.clone(); 
+                } else {
+                    dst = new cv.Mat.zeros(src.rows, src.cols, src.type()); 
+                }
+
+
                 for (let i = 0; i < uniqueH.length; i++) {
                     cv.line(dst, new cv.Point(uniqueV[0], uniqueH[i]), new cv.Point(uniqueV[uniqueV.length - 1], uniqueH[i]), new cv.Scalar(0, 255, 0, 255), 1);
                 }
