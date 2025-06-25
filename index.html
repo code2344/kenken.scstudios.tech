@@ -180,9 +180,10 @@
             // Tesseract worker initialization
             (async () => {
                 try {
-                    // *** REVERTING TO SIMPLE TESSERACT.CREATEWORKER('ENG') ***
-                    tessWorker = Tesseract.createWorker('eng', { // Just pass 'eng' as the language
-                        logger: m => console.log(m) // Keep verbose logging for any hints
+                    tessWorker = Tesseract.createWorker('eng', {
+                        logger: m => console.log(m), // Keep verbose logging for any hints
+                        // *** IMPORTANT CHANGE: Disable Web Worker ***
+                        worker: false
                     });
                     await tessWorker.load();
                     await tessWorker.loadLanguage('eng');
@@ -642,6 +643,7 @@
                 console.log("Border Map (derived from pixel density):", borderMap);
 
                 setBar(70, 'Performing OCR on image...');
+                // The actual OCR step - this is where the lag might occur
                 const { data: { words: allWords } } = await tessWorker.recognize(imgElement);
                 console.log("All Recognized Words with BBoxes:", allWords);
 
