@@ -38,6 +38,7 @@
         #outputCanvas { max-width: 300px; max-height: 300px; margin-top: 10px; border: 1px solid #aaa; display: block; margin-left: auto; margin-right: auto; }
         #progressBox { width: 300px; margin: 10px auto; border: 1px solid #666; height: 16px; position: relative; }
         #bar { height: 100%; width: 0; background: #28a745; text-align: center; color: white; font-size: 10px; line-height: 16px; }
+        #libraryStatus { margin-top: 10px; font-weight: bold; color: #555; }
     </style>
     <script src="https://docs.opencv.org/4.x/opencv.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
@@ -45,6 +46,8 @@
 <body>
 
     <h2>KenKen Builder · Screenshot Importer · Solver</h2>
+
+    <p id="libraryStatus">Loading essential libraries (OpenCV, Tesseract)...</p>
 
     <label>Grid Size <input id="sizeInput" type="number" value="6" min="3" max="25"></label>
     <button onclick="buildGrid()">Build Grid</button>
@@ -71,43 +74,64 @@
     <button onclick="solve()">Solve</button>
 
     <script>
-        let cvReady = false, tessReady = false, tessWorker = null;
+        let cvReadyPromiseResolver; // Resolver for the OpenCV promise
+        let cvRuntimeInitializedPromise = new Promise(resolve => {
+            cvReadyPromiseResolver = resolve;
+        });
+
+        let tessReadyPromiseResolver; // Resolver for the Tesseract promise
+        let tessWorkerInitializedPromise = new Promise(resolve => {
+            tessReadyPromiseResolver = resolve;
+        });
+
+        let tessWorker = null; // Tesseract worker instance
         let size = 6, grid = [], cages = [], selectedCells = [], selectedOp = null;
         let initialBoardState = []; // To store numbers extracted by OCR
 
         // --- Library Initialization ---
-        // This is the correct way to know when OpenCV's WASM module is fully loaded and ready
+
+        // OpenCV's callback for when its WASM module is fully loaded and ready
         cv.onRuntimeInitialized = () => {
-            cvReady = true;
             console.log("OpenCV (cv.onRuntimeInitialized) is ready!");
-            checkReady();
+            cvReadyPromiseResolver(); // Resolve the OpenCV promise
         };
 
+        // Tesseract worker initialization
         (async () => {
-            tessWorker = Tesseract.createWorker({
-                logger: m => {
-                    // console.log(m); // Uncomment for detailed Tesseract logs
-                    // Progress bar updates for OCR are handled inside importImage() now.
-                }
-            });
-            await tessWorker.load();
-            await tessWorker.loadLanguage('eng');
-            await tessWorker.initialize('eng');
-            tessReady = true;
-            console.log("Tesseract is ready!");
-            checkReady();
+            try {
+                tessWorker = Tesseract.createWorker({
+                    logger: m => { /* Console logging for Tesseract progress is removed here, handled during import */ }
+                });
+                await tessWorker.load();
+                await tessWorker.loadLanguage('eng');
+                await tessWorker.initialize('eng');
+                console.log("Tesseract is ready!");
+                tessReadyPromiseResolver(); // Resolve the Tesseract promise
+            } catch (error) {
+                console.error("Failed to initialize Tesseract:", error);
+                document.getElementById('libraryStatus').textContent = "Error loading Tesseract. Check console.";
+                alert("Error loading Tesseract. Please check your internet connection or console for details.");
+            }
         })();
 
-        // --- Global Readiness Check ---
-        function checkReady() {
-            if (cvReady && tessReady) {
-                document.getElementById('importBtn').disabled = false;
-                console.log("All libraries (OpenCV, Tesseract) are ready. Import button enabled!");
-            }
-        }
+        // --- Centralized Readiness Check & App Start ---
+        // Wait for both libraries to be ready before enabling functionality
+        Promise.all([cvRuntimeInitializedPromise, tessWorkerInitializedPromise])
+            .then(() => {
+                console.log("All libraries (OpenCV, Tesseract) are ready!");
+                document.getElementById('importBtn').disabled = false; // Enable the import button
+                document.getElementById('libraryStatus').textContent = "Libraries loaded successfully.";
+                buildGrid(); // Build the grid only after libraries are ready
+            })
+            .catch(error => {
+                console.error("One or more libraries failed to load:", error);
+                document.getElementById('libraryStatus').textContent = "Failed to load all libraries. Check console for errors.";
+                alert("Error: Essential libraries could not be loaded. Please check your internet connection or console for details.");
+            });
+
 
         // --- KenKen Builder (Manual Input) Logic ---
-        document.addEventListener('DOMContentLoaded', buildGrid); // Build grid on page load
+        // document.addEventListener('DOMContentLoaded', buildGrid); // REMOVED: buildGrid is now called after libraries are ready
 
         function buildGrid() {
             size = parseInt(document.getElementById("sizeInput").value);
@@ -611,7 +635,7 @@
                 const visitedCellsForCages = Array(size).fill(false).map(() => Array(size).fill(false));
                 cages = []; // Clear global cages array
 
-                function floodFillForCage(startR, startC, borderMap, visited) { // Removed cellCoordsMap as it's not used here
+                function floodFillForCage(startR, startC, borderMap, visited) {
                     const cageCells = [];
                     const queue = [[startR, startC]];
                     visited[startR][startC] = true;
@@ -653,7 +677,7 @@
                             const { target: cageTarget, op: cageOp } = label.parsed;
 
                             if (cageTarget !== null || cageOp === '=') { // Ensure it's a valid cage label
-                                const cellsInThisCage = floodFillForCage(r, c, borderMap, visitedCellsForCages); // Pass borderMap directly
+                                const cellsInThisCage = floodFillForCage(r, c, borderMap, visitedCellsForCages);
 
                                 if (cellsInThisCage.length > 0) {
                                     cellsInThisCage.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
