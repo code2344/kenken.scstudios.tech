@@ -180,11 +180,9 @@
             // Tesseract worker initialization
             (async () => {
                 try {
-                    tessWorker = Tesseract.createWorker({
-                        // **IMPORTANT: POINTING TO YOUR SELF-HOSTED FILES**
-                        workerPath: './tesseract_assets/worker.min.js',
-                        langPath: './tesseract_assets/traineddata/', // Tesseract will look for eng.traineddata.gz inside this folder
-                        logger: m => { /* Console logging for Tesseract progress is removed here, handled during import */ }
+                    // *** REVERTING TO SIMPLE TESSERACT.CREATEWORKER('ENG') ***
+                    tessWorker = Tesseract.createWorker('eng', { // Just pass 'eng' as the language
+                        logger: m => console.log(m) // Keep verbose logging for any hints
                     });
                     await tessWorker.load();
                     await tessWorker.loadLanguage('eng');
@@ -194,7 +192,7 @@
                 } catch (error) {
                     console.error("Failed to initialize Tesseract:", error);
                     document.getElementById('libraryStatus').textContent = "Error loading Tesseract. Check console/network or try clearing cache.";
-                    alert("Critical Error: Tesseract.js failed to load. Please check your internet connection and ensure all Tesseract assets are correctly hosted on GitHub Pages.");
+                    alert("Critical Error: Tesseract.js failed to load. Please check your internet connection and browser console for details.");
                 }
             })();
 
