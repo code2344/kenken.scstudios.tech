@@ -39,7 +39,7 @@
         #progressBox { width: 300px; margin: 10px auto; border: 1px solid #666; height: 16px; position: relative; }
         #bar { height: 100%; width: 0; background: #28a745; text-align: center; color: white; font-size: 10px; line-height: 16px; }
     </style>
-    <script src="https://docs.opencv.org/4.x/opencv.js" async onload="cvReadyCallback()"></script>
+    <script src="https://docs.opencv.org/4.x/opencv.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 </head>
 <body>
@@ -76,20 +76,18 @@
         let initialBoardState = []; // To store numbers extracted by OCR
 
         // --- Library Initialization ---
-        function cvReadyCallback() {
+        // This is the correct way to know when OpenCV's WASM module is fully loaded and ready
+        cv.onRuntimeInitialized = () => {
             cvReady = true;
-            console.log("OpenCV is ready!");
+            console.log("OpenCV (cv.onRuntimeInitialized) is ready!");
             checkReady();
-        }
+        };
 
         (async () => {
             tessWorker = Tesseract.createWorker({
                 logger: m => {
                     // console.log(m); // Uncomment for detailed Tesseract logs
-                    // Only update progress bar during actual import, not initial loading
-                    // if (m.status === 'recognizing text' || m.status === 'initializing Tesseract' || m.status === 'loading tesseract core' || m.status === 'loading language traineddata') {
-                    //     setBar(m.progress * 100, `Tesseract: ${m.status}`);
-                    // }
+                    // Progress bar updates for OCR are handled inside importImage() now.
                 }
             });
             await tessWorker.load();
@@ -290,8 +288,8 @@
 
                     // Check if all cells in the cage are filled, then evaluate the full cage constraint
                     if (valuesInCage.length === cage.cells.length) {
-                        const result = evaluate(valuesInCage, cage.op); // target is used inside evaluate
-                        if (result === null || result !== parseInt(cage.target)) { // Compare with cage's target
+                        const result = evaluate(valuesInCage, cage.op);
+                        if (result === null || result !== parseInt(cage.target)) {
                             board[r][c] = 0;
                             return false;
                         }
@@ -402,9 +400,9 @@
                 return;
             }
 
-            setBar(0, 'Initializing image processing...');
+            // Show UI elements for progress
             document.getElementById('progressBox').style.display = 'block';
-            document.getElementById('outputCanvas').style.display = 'block'; // Show canvas for output
+            document.getElementById('outputCanvas').style.display = 'block';
 
             let src = null, gray = null, processed = null, lines = null, dst = null; // Declare Mats for cleanup
 
@@ -575,8 +573,6 @@
 
                 // 6. Perform OCR on the entire image for all text/words
                 setBar(70, 'Performing OCR on image...');
-                // We are passing imgElement (the original image) directly to Tesseract
-                // The logger for Tesseract is already configured globally
                 const { data: { words: allWords } } = await tessWorker.recognize(imgElement);
                 console.log("All Recognized Words with BBoxes:", allWords);
 
@@ -601,7 +597,6 @@
                                 cellContents[cell.r][cell.c].labels.push({ text: word.text.trim(), parsed: parsed, bbox: wordRect });
                             }
                             // Store number if valid AND it's a single number (not part of a label like "8+")
-                            // A simple check: if the label parser found an operator, it's a label, not a solitary number.
                             if (!isNaN(num) && num >= 1 && num <= size && !parsed.op) {
                                 initialBoardState[cell.r][cell.c] = num; // Pre-fill numbers directly
                             }
@@ -616,7 +611,7 @@
                 const visitedCellsForCages = Array(size).fill(false).map(() => Array(size).fill(false));
                 cages = []; // Clear global cages array
 
-                function floodFillForCage(startR, startC, cellCoordsMap, borderMap, visited) {
+                function floodFillForCage(startR, startC, borderMap, visited) { // Removed cellCoordsMap as it's not used here
                     const cageCells = [];
                     const queue = [[startR, startC]];
                     visited[startR][startC] = true;
@@ -627,19 +622,19 @@
 
                         // Check neighbors: Up, Down, Left, Right
                         const neighbors = [
-                            { dr: -1, dc: 0, dir: 'top', oppDir: 'bottom' }, // Up
-                            { dr: 1, dc: 0, dir: 'bottom', oppDir: 'top' }, // Down
-                            { dr: 0, dc: -1, dir: 'left', oppDir: 'right' }, // Left
-                            { dr: 0, dc: 1, dir: 'right', oppDir: 'left' }  // Right
+                            { dr: -1, dc: 0, dir: 'top' }, // Up
+                            { dr: 1, dc: 0, dir: 'bottom' }, // Down
+                            { dr: 0, dc: -1, dir: 'left' }, // Left
+                            { dr: 0, dc: 1, dir: 'right' }  // Right
                         ];
 
-                        for (const { dr, dc, dir, oppDir } of neighbors) {
+                        for (const { dr, dc, dir } of neighbors) {
                             const nr = currR + dr;
                             const nc = currC + dc;
 
                             if (nr >= 0 && nr < size && nc >= 0 && nc < size && !visited[nr][nc]) {
-                                // Check if there's a thick border between (currR, currC) and (nr, nc)
-                                const hasBorder = borderMap[currR][currC][dir]; // Check current cell's border to neighbor
+                                // Check if there's a thick border *from the current cell* to the neighbor
+                                const hasBorder = borderMap[currR][currC][dir];
 
                                 if (!hasBorder) { // If NO border, add to queue
                                     queue.push([nr, nc]);
@@ -658,7 +653,7 @@
                             const { target: cageTarget, op: cageOp } = label.parsed;
 
                             if (cageTarget !== null || cageOp === '=') { // Ensure it's a valid cage label
-                                const cellsInThisCage = floodFillForCage(r, c, cellCoords, borderMap, visitedCellsForCages);
+                                const cellsInThisCage = floodFillForCage(r, c, borderMap, visitedCellsForCages); // Pass borderMap directly
 
                                 if (cellsInThisCage.length > 0) {
                                     cellsInThisCage.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
@@ -703,21 +698,22 @@
                         const cell = cellCoords.find(coord => coord.r === r && coord.c === c);
                         if (!cell) continue;
 
+                        // Check actual borderMap for 'true' borders, not just `r > 0`
                         if (borderMap[r][c].top) {
                             cv.line(dst, new cv.Point(cell.x, cell.y), new cv.Point(cell.x + cell.width, cell.y), new cv.Scalar(255, 0, 0, 255), 3);
                         }
                         if (borderMap[r][c].left) {
                             cv.line(dst, new cv.Point(cell.x, cell.y), new cv.Point(cell.x, cell.y + cell.height), new cv.Scalar(255, 0, 0, 255), 3);
                         }
-                        // Only draw bottom/right for the last row/col or if it's an outer border
-                        // This prevents drawing internal lines twice.
-                        if (r === size - 1 && !borderMap[r][c].bottom) { // Last row, no internal bottom border
-                             cv.line(dst, new cv.Point(cell.x, cell.y + cell.height), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(0, 0, 255, 255), 3); // Blue outer
+                        // Draw bottom/right borders only if they are the true boundary of the grid
+                        // or if they are marked as a thick internal border.
+                        if (r === size - 1 && !borderMap[r][c].bottom) { // Last row, no internal bottom border defined
+                            cv.line(dst, new cv.Point(cell.x, cell.y + cell.height), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(0, 0, 255, 255), 3); // Blue outer
                         } else if (borderMap[r][c].bottom) { // Internal thick bottom border
                             cv.line(dst, new cv.Point(cell.x, cell.y + cell.height), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(255, 0, 0, 255), 3);
                         }
 
-                        if (c === size - 1 && !borderMap[r][c].right) { // Last col, no internal right border
+                        if (c === size - 1 && !borderMap[r][c].right) { // Last col, no internal right border defined
                             cv.line(dst, new cv.Point(cell.x + cell.width, cell.y), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(0, 0, 255, 255), 3); // Blue outer
                         } else if (borderMap[r][c].right) { // Internal thick right border
                              cv.line(dst, new cv.Point(cell.x + cell.width, cell.y), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(255, 0, 0, 255), 3);
