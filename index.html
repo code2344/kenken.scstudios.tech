@@ -1,33 +1,47 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>KenKen Builder • OCR Import • Solver</title>
-<style>
- body{font-family:sans-serif;text-align:center;margin:20px}
- table{border-collapse:collapse;margin:10px auto}
- td{width:50px;height:50px;text-align:center;font-size:20px;position:relative;cursor:pointer;padding:0}
- .selected{background:#cce5ff}
- .cage-label{position:absolute;top:0;left:2px;font-size:12px;color:#666}
- .op-button{padding:5px 10px;margin:2px;font-size:16px;cursor:pointer}
- .op-button.selected{background:#007bff;color:#fff;border:none}
- input[type=number]{width:60px}
- button{margin:5px;padding:5px 10px}
- #preview{max-width:300px;max-height:300px;margin-top:10px;border:1px solid #aaa}
- #progressBox{width:300px;margin:10px auto;border:1px solid #666;height:16px}
- #bar{height:100%;width:0;background:#28a745}
-</style>
-
-<!-- 1️⃣  ALWAYS load opencv.js first (NOT async) -->
-<script src="https://docs.opencv.org/4.x/opencv.js"></script>
-<!-- 2️⃣  Tesseract -->
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <meta charset="UTF-8" />
+  <title>KenKen Builder • OCR Import • Solver</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin: 20px; }
+    table { border-collapse: collapse; margin: 10px auto; }
+    td {
+      width: 50px; height: 50px;
+      text-align: center; font-size: 20px; position: relative;
+      cursor: pointer; padding: 0;
+    }
+    .selected { background: #cce5ff; }
+    .cage-label {
+      position: absolute;
+      top: 0; left: 2px;
+      font-size: 12px;
+      color: #666;
+    }
+    .op-button {
+      padding: 5px 10px;
+      margin: 2px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .op-button.selected {
+      background-color: #007bff;
+      color: white;
+      border: none;
+    }
+    input[type=number] { width: 60px; }
+    button { margin: 5px; padding: 5px 10px; }
+    #preview { max-width: 300px; max-height: 300px; margin-top: 10px; border: 1px solid #aaa; }
+    #progressBox { width: 300px; margin: 10px auto; border: 1px solid #666; height: 16px; }
+    #bar { height: 100%; width: 0; background: #28a745; }
+  </style>
+  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 </head>
 <body>
 
 <h2>KenKen Builder · Screenshot Importer · Solver</h2>
 
-<!-- ===== Manual builder ===== -->
 <label>Grid Size <input id="sizeInput" type="number" value="5" min="3" max="25"></label>
 <button onclick="buildGrid()">Build Grid</button>
 
@@ -45,197 +59,227 @@
 <hr>
 <h3>Import a Screenshot</h3>
 <input type="file" id="imgInput" accept="image/*">
-<br><img id="preview" alt="">
+<br><img id="preview" alt="preview">
 <div id="progressBox" style="display:none"><div id="bar"></div></div>
 <p><button id="importBtn" disabled>Import This Image</button></p>
 
 <table id="grid"></table>
 <button onclick="solve()">Solve</button>
 
-<!----------- SCRIPT ----------->
 <script>
-/* ========== 1. WAIT FOR OpenCV ========== */
-let cvReady=false, tessReady=false;
+let cvReady = false, tessReady = false, tessWorker = null;
+let size = 5, grid = [], cages = [], selectedCells = [], selectedOp = null;
 
-cv['onRuntimeInitialized']=()=>{cvReady=true;checkLibsReady();};
-
-Tesseract.createWorker('eng').then(w=>{
-  window.tessWorker=w;
-  tessReady=true; checkLibsReady();
-});
-
-function checkLibsReady(){
-  if(cvReady && tessReady){
-    document.getElementById('importBtn').disabled=false;
-  }
-}
-
-/* ========== 2. Builder / Solver from before ========== */
-let size=5,grid=[],cages=[],selectedCells=[],selectedOp=null;
-
-function buildGrid(n=size){
-  size=parseInt(document.getElementById('sizeInput').value||n);
-  const table=document.getElementById('grid'); table.innerHTML='';
-  cages=[];selectedCells=[];selectedOp=null;clearOpButtons();grid=[];
-  for(let r=0;r<size;r++){
-    const tr=document.createElement('tr');const row=[];
-    for(let c=0;c<size;c++){
-      const td=document.createElement('td');td.dataset.row=r;td.dataset.col=c;
-      td.onclick=()=>toggleCell(td);td.style.border='1px solid #444';
-      tr.appendChild(td);row.push(td);
-    }table.appendChild(tr);grid.push(row);
-  }
-}
-function toggleCell(td){const r=+td.dataset.row,c=+td.dataset.col;
-  const i=selectedCells.findIndex(v=>v[0]===r&&v[1]===c);
-  i>=0?(selectedCells.splice(i,1),td.classList.remove('selected'))
-       :(selectedCells.push([r,c]),td.classList.add('selected'));
-}
-function selectOp(btn,op){selectedOp=op;clearOpButtons();btn.classList.add('selected')}
-function clearOpButtons(){document.querySelectorAll('.op-button').forEach(b=>b.classList.remove('selected'))}
-
-function addCage(){
-  const target=parseInt(document.getElementById('targetInput').value);
-  if(!target||!selectedOp||!selectedCells.length){alert('Fill target/op/cells');return;}
-  /* overwrite */
-  const set=new Set(selectedCells.map(c=>c+''));
-  cages=cages.filter(cg=>!cg.cells.some(p=>set.has(p+'')));
-  cages.push({cells:[...selectedCells],target,op:selectedOp});
-  refreshGrid();selectedCells=[];updateCageBorders();
-}
-function getCageIndex(r,c){return cages.findIndex(cg=>cg.cells.some(p=>p[0]===r&&p[1]===c));}
-function refreshGrid(){
-  for(let r=0;r<size;r++)for(let c=0;c<size;c++){
-    const td=grid[r][c];td.textContent='';td.className='';td.querySelector('.cage-label')?.remove();
-  }
-  cages.forEach((cg,i)=>cg.cells.forEach(([r,c],k)=>{
-    const td=grid[r][c];td.classList.add('cage-'+i);
-    if(k===0){const d=document.createElement('div');d.className='cage-label';d.textContent=cg.target+cg.op;td.appendChild(d);}
-  }));
-}
-function updateCageBorders(){
-  for(let r=0;r<size;r++)for(let c=0;c<size;c++){
-    const cid=getCageIndex(r,c);if(cid<0)continue;
-    const td=grid[r][c];
-    const thick=d=>d? '2px solid #000':'1px solid #444';
-    const top   =thick(r===0||getCageIndex(r-1,c)!==cid);
-    const left  =thick(c===0||getCageIndex(r,c-1)!==cid);
-    const bottom=thick(r===size-1||getCageIndex(r+1,c)!==cid);
-    const right =thick(c===size-1||getCageIndex(r,c+1)!==cid);
-    Object.assign(td.style,{borderTop:top,borderLeft:left,borderBottom:bottom,borderRight:right});
-  }
-}
-function solve(){
-  const board=Array.from({length:size},()=>Array(size).fill(0));
-  const evalC=(v,o)=>o==='+'?v.reduce((a,b)=>a+b,0):o==='-'?Math.abs(v[0]-v[1]):
-                     o==='×'?v.reduce((a,b)=>a*b,1):o==='÷'?Math.max(...v)/Math.min(...v):v[0];
-  const valid=(r,c,val)=>{
-    for(let i=0;i<size;i++)if(board[r][i]===val||board[i][c]===val)return false;
-    board[r][c]=val;
-    for(const cg of cages){
-      const vals=cg.cells.map(([x,y])=>board[x][y]).filter(Boolean);
-      if(vals.length===cg.cells.length&&evalC(vals,cg.op)!==cg.target){board[r][c]=0;return false;}
-      if(cg.op==='='&&vals[0]&&vals[0]!==cg.target){board[r][c]=0;return false;}
-    } board[r][c]=0;return true;
-  };
-  const dfs=(r=0,c=0)=>{
-    if(r===size)return true;const [nr,nc]=c===size-1?[r+1,0]:[r,c+1];
-    for(let v=1;v<=size;v++)if(valid(r,c,v)){board[r][c]=v;if(dfs(nr,nc))return true;board[r][c]=0;}
-    return false;
-  };
-  if(dfs()) for(let r=0;r<size;r++)for(let c=0;c<size;c++)grid[r][c].textContent=board[r][c];
-  else alert('No solution');
-}
-
-/* ========== 3. Image preview & OCR import ========== */
-const imgInput=document.getElementById('imgInput');
-const preview=document.getElementById('preview');
-const bar=document.getElementById('bar');
-const box=document.getElementById('progressBox');
-
-imgInput.onchange=e=>{
-  const file=e.target.files[0]; if(!file)return;
-  preview.src=URL.createObjectURL(file);
-  preview.onload=()=>URL.revokeObjectURL(preview.src);
-  bar.style.width='0';box.style.display='none';
+cv.onRuntimeInitialized = () => {
+  cvReady = true;
+  checkReady();
 };
 
-document.getElementById('importBtn').onclick=async()=>{
-  if(!preview.src){alert('Pick an image first');return;}
-  box.style.display='block';setBar(5);
+(async () => {
+  tessWorker = Tesseract.createWorker({ logger: m => console.log(m) });
+  await tessWorker.load();
+  await tessWorker.loadLanguage('eng');
+  await tessWorker.initialize('eng');
+  tessReady = true;
+  checkReady();
+})();
 
-  /* 3-a. Warp & binarise */
-  const src=cv.imread(preview);
-  cv.cvtColor(src,src,cv.COLOR_RGBA2GRAY,0);
-  cv.GaussianBlur(src,src,new cv.Size(3,3),0);
-  cv.adaptiveThreshold(src,src,255,cv.ADAPTIVE_THRESH_GAUSSIAN_C,cv.THRESH_BINARY_INV,11,2);
-
-  // find biggest contour (grid)
-  const contours=new cv.MatVector(),hier=new cv.Mat();
-  cv.findContours(src,contours,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
-  let maxArea=0,maxIdx=-1;
-  for(let i=0;i<contours.size();i++){
-    const a=cv.contourArea(contours.get(i)); if(a>maxArea){maxArea=a;maxIdx=i;}
+function checkReady() {
+  if (cvReady && tessReady) {
+    document.getElementById('importBtn').disabled = false;
   }
-  if(maxIdx<0){alert('Grid not found');return;}
-  const rect=cv.minAreaRect(contours.get(maxIdx));
-  const pts=cv.matFromArray(4,1,cv.CV_32FC2,rect.points().flat());
-  const w=Math.round(rect.size.width),h=Math.round(rect.size.height);
-  const dst=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,w,0,w,h,0,h]);
-  const M=cv.getPerspectiveTransform(pts,dst),warped=new cv.Mat();
-  cv.warpPerspective(src,warped,M,new cv.Size(w,h)); setBar(20);
+}
 
-  /* 3-b. Guess grid size */
-  const proj=new cv.Mat(); cv.reduce(warped,proj,0,cv.REDUCE_AVG,cv.CV_32F);
-  const thresh=200; let peaks=0;
-  for(let i=0;i<proj.cols;i++) if(proj.data32F[i]>thresh) peaks++;
-  const n=peaks-1; if(n<3||n>25){alert('Grid size fail');return;}
-  document.getElementById('sizeInput').value=n; buildGrid(n); setBar(35);
+function buildGrid() {
+  size = parseInt(document.getElementById("sizeInput").value);
+  const table = document.getElementById("grid");
+  table.innerHTML = '';
+  cages = []; selectedCells = []; selectedOp = null; clearOpButtons(); grid = [];
 
-  /* 3-c. Detect cages */
-  const cell=Math.floor(w/n),visited=Array.from({length:n},()=>Array(n).fill(false)),newCages=[];
-  const thickEdge=(r,c,dir)=>{
-    const x=c*cell,y=r*cell;
-    const line=dir==='t'?[[x,y],[x+cell,y]]:dir==='b'?[[x,y+cell],[x+cell,y+cell]]:
-               dir==='l'?[[x,y],[x,y+cell]]:[[x+cell,y],[x+cell,y+cell]];
-    let cnt=0;for(let i=0;i<10;i++){
-      const px=Math.round(line[0][0]+(line[1][0]-line[0][0])*i/10);
-      const py=Math.round(line[0][1]+(line[1][1]-line[0][1])*i/10);
-      if(warped.ucharPtr(py,px)[0])cnt++;
+  for (let r = 0; r < size; r++) {
+    const tr = document.createElement("tr");
+    const row = [];
+    for (let c = 0; c < size; c++) {
+      const td = document.createElement("td");
+      td.dataset.row = r;
+      td.dataset.col = c;
+      td.addEventListener("click", () => toggleCell(td));
+      td.textContent = '';
+      td.style.border = "1px solid #444";
+      tr.appendChild(td);
+      row.push(td);
     }
-    return cnt>5; // more than half points black
-  };
-  for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(!visited[r][c]){
-    const q=[[r,c]],cells=[];visited[r][c]=true;
-    while(q.length){
-      const [rr,cc]=q.pop();cells.push([rr,cc]);
-      [['t',-1,0],['b',1,0],['l',0,-1],['r',0,1]].forEach(([d,dr,dc])=>{
-        const nr=rr+dr,nc=cc+dc;
-        if(nr<0||nc<0||nr>=n||nc>=n||visited[nr][nc])return;
-        if(!thickEdge(rr,cc,d)){visited[nr][nc]=true;q.push([nr,nc]);}
-      });
-    } newCages.push(cells);
-  } setBar(55);
-
-  /* 3-d. OCR */
-  cages=[];
-  tessWorker.setParameters({tessedit_char_whitelist:'0123456789+×÷-= -'});
-  for(let i=0;i<newCages.length;i++){
-    const cells=newCages[i],[r0,c0]=cells[0];
-    const roi=warped.roi(new cv.Rect(c0*cell,r0*cell,cell,cell));
-    const can=document.createElement('canvas');can.width=cell;can.height=cell;cv.imshow(can,roi);
-    const {data:{text}}=await tessWorker.recognize(can);
-    const m=text.replace(/\s+/g,'').match(/^(\d+)([+\-×÷=])?/);
-    if(!m){continue;}
-    cages.push({cells,target:+m[1],op:m[2]||'='});
-    setBar(55+45*(i/newCages.length));
+    table.appendChild(tr);
+    grid.push(row);
   }
-  setBar(100); refreshGrid();updateCageBorders();
-  alert('Import complete');
+}
+
+function toggleCell(td) {
+  const r = parseInt(td.dataset.row);
+  const c = parseInt(td.dataset.col);
+  const i = selectedCells.findIndex(cell => cell[0] === r && cell[1] === c);
+  if (i >= 0) {
+    selectedCells.splice(i, 1);
+    td.classList.remove("selected");
+  } else {
+    selectedCells.push([r, c]);
+    td.classList.add("selected");
+  }
+}
+
+function selectOp(button, op) {
+  selectedOp = op;
+  clearOpButtons();
+  button.classList.add("selected");
+}
+
+function clearOpButtons() {
+  document.querySelectorAll('.op-button').forEach(btn => {
+    btn.classList.remove("selected");
+  });
+}
+
+function addCage() {
+  const target = parseInt(document.getElementById("targetInput").value);
+  if (!target || selectedCells.length === 0 || !selectedOp) return alert("Fill target, operator, and select cells");
+
+  // Overwrite any existing cage that overlaps
+  const newSet = new Set(selectedCells.map(c => c + ""));
+  cages = cages.filter(c => !c.cells.some(cell => newSet.has(cell + "")));
+  cages.push({ cells: [...selectedCells], target, op: selectedOp });
+
+  selectedCells = [];
+  refreshGrid();
+  updateCageBorders();
+}
+
+function refreshGrid() {
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const td = grid[r][c];
+      td.classList.remove("selected");
+      td.textContent = "";
+      td.querySelector(".cage-label")?.remove();
+    }
+  }
+  cages.forEach((cage, index) => {
+    cage.cells.forEach(([r, c], i) => {
+      const td = grid[r][c];
+      td.classList.add(`cage-${index}`);
+      if (i === 0) {
+        const label = document.createElement("div");
+        label.className = "cage-label";
+        label.textContent = cage.target + cage.op;
+        td.appendChild(label);
+      }
+    });
+  });
+}
+
+function getCageIndex(r, c) {
+  for (let i = 0; i < cages.length; i++) {
+    if (cages[i].cells.some(([x, y]) => x === r && y === c)) return i;
+  }
+  return null;
+}
+
+function updateCageBorders() {
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const td = grid[r][c];
+      const thisCage = getCageIndex(r, c);
+      if (thisCage === null) continue;
+
+      const top = (r > 0 && getCageIndex(r - 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
+      const left = (c > 0 && getCageIndex(r, c - 1) !== thisCage) ? '2px solid black' : '1px solid #444';
+      const bottom = (r < size - 1 && getCageIndex(r + 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
+      const right = (c < size - 1 && getCageIndex(r, c + 1) !== thisCage) ? '2px solid black' : '1px solid #444';
+
+      td.style.borderTop = top;
+      td.style.borderLeft = left;
+      td.style.borderBottom = bottom;
+      td.style.borderRight = right;
+    }
+  }
+}
+
+function solve() {
+  const board = Array.from({ length: size }, () => Array(size).fill(0));
+
+  function isValid(r, c, val) {
+    for (let i = 0; i < size; i++) {
+      if (board[r][i] === val || board[i][c] === val) return false;
+    }
+
+    board[r][c] = val;
+
+    for (const cage of cages) {
+      const values = cage.cells.map(([x, y]) => board[x][y]).filter(v => v !== 0);
+      if (values.length === cage.cells.length) {
+        const result = evaluate(values, cage.op);
+        if (result !== cage.target) {
+          board[r][c] = 0;
+          return false;
+        }
+      } else if (cage.op === '=' && values[0] && values[0] !== cage.target) {
+        board[r][c] = 0;
+        return false;
+      }
+    }
+
+    board[r][c] = 0;
+    return true;
+  }
+
+  function evaluate(values, op) {
+    if (op === '+') return values.reduce((a, b) => a + b, 0);
+    if (op === '-') return Math.abs(values[0] - values[1]);
+    if (op === '×') return values.reduce((a, b) => a * b, 1);
+    if (op === '÷') return Math.max(...values) / Math.min(...values);
+    if (op === '=') return values[0];
+  }
+
+  function backtrack(r = 0, c = 0) {
+    if (r === size) return true;
+    const [nextR, nextC] = c === size - 1 ? [r + 1, 0] : [r, c + 1];
+
+    for (let val = 1; val <= size; val++) {
+      if (isValid(r, c, val)) {
+        board[r][c] = val;
+        if (backtrack(nextR, nextC)) return true;
+        board[r][c] = 0;
+      }
+    }
+    return false;
+  }
+
+  if (backtrack()) {
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        grid[r][c].textContent = board[r][c];
+      }
+    }
+  } else {
+    alert("No solution found.");
+  }
+}
+
+// Minimal progress bar logic
+function setBar(pct) {
+  document.getElementById('progressBox').style.display = 'block';
+  document.getElementById('bar').style.width = pct + '%';
+}
+
+// TODO: Add image processing & OCR here.
+
+document.getElementById('imgInput').onchange = e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const preview = document.getElementById('preview');
+  preview.src = URL.createObjectURL(file);
+  preview.onload = () => URL.revokeObjectURL(preview.src);
 };
 
-function setBar(p){bar.style.width=p+'%';}
-buildGrid();
 </script>
 </body>
 </html>
