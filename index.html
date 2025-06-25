@@ -167,6 +167,17 @@
             onRuntimeInitialized: function() {
                 console.log("OpenCV (Module.onRuntimeInitialized) is ready!");
                 cvReadyPromiseResolver.resolve(); // Resolve the promise indicating OpenCV is ready
+            },
+            // Explicitly tell OpenCV.js where to find its .wasm file.
+            locateFile: function(path, prefix) {
+                // Assuming opencv.js and opencv_js.wasm are in the same directory.
+                // The URL for opencv.js is https://docs.opencv.org/4.5.0/opencv.js
+                // So, it will try to find opencv_js.wasm relative to that.
+                if (path.endsWith('.wasm')) {
+                    // Adjust this path if the .wasm file is hosted elsewhere
+                    return "https://docs.opencv.org/4.5.0/" + path; 
+                }
+                return prefix + path;
             }
         };
 
@@ -174,8 +185,8 @@
         // This ensures the Module object is defined first and then the script is fetched.
         (function loadOpenCvScript() {
             const script = document.createElement('script');
-            // FIX: Using the official OpenCV.js 4.x CDN, which points to the latest stable version.
-            script.src = "https://docs.opencv.org/4.x/opencv.js"; 
+            // Using a specific and generally stable OpenCV.js 4.5.0 from official docs.
+            script.src = "https://docs.opencv.org/4.5.0/opencv.js"; 
             script.async = true; // Load asynchronously
             script.onerror = (e) => {
                 console.error("Failed to load OpenCV.js script:", e);
@@ -207,9 +218,10 @@
                         'eng', // 1st argument: langs (language)
                         null,  // 2nd argument: oem (OCR Engine Mode - null for default)
                         {      // 3rd argument: options object
-                            workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@3.0.3/dist/worker.min.js',
-                            corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js@3.0.3/dist/tesseract-core.js', // Note: .js for v3 core
-                            langPath: 'https://cdn.jsdelivr.net/npm/tessdata@3.0.3/', // Base URL for language data files
+                            // Updated Tesseract.js resource paths to use unpkg.com
+                            workerPath: 'https://unpkg.com/tesseract.js@3.0.3/dist/worker.min.js',
+                            corePath: 'https://unpkg.com/tesseract.js@3.0.3/dist/tesseract-core.js', 
+                            langPath: 'https://unpkg.com/tessdata@3.0.3/', // Base URL for language data files
                             logger: m => {
                                 console.log('Tesseract Log:', m); // Logs all internal Tesseract messages
                                 if (m.status) {
@@ -529,7 +541,7 @@
         };
 
         async function importImage() {
-            const imgElement = document.getElementById('preview');
+            const imgElement = document.getElementById('preview'); // The <img> element for visual preview
             if (!selectedFile) { // Check if a file was actually selected
                 alert("Please select an image first for import.");
                 return;
@@ -542,47 +554,40 @@
             let src = null, gray = null, processed = null, lines = null, dst = null; // Declare Mats for cleanup
 
             try {
-                setBar(5, 'Loading image into canvas...');
+                setBar(5, 'Loading image for OpenCV...');
 
-                // Create a temporary canvas to draw the image for cv.imread
-                const tempCanvas = document.createElement('canvas');
-                const tempCtx = tempCanvas.getContext('2d');
-
-                // Wait for the image to load on the imgElement
-                await new Promise((resolve, reject) => {
-                    const timeoutId = setTimeout(() => {
-                        reject(new Error("Image loading timed out. Check image file or network."));
-                    }, 10000); // 10 seconds timeout
-
-                    if (imgElement.complete && imgElement.naturalWidth !== 0) { // Already loaded
-                        clearTimeout(timeoutId);
-                        resolve();
-                    } else {
-                        imgElement.onload = () => {
-                            clearTimeout(timeoutId);
-                            resolve();
-                        };
-                        imgElement.onerror = (e) => {
-                            clearTimeout(timeoutId);
-                            reject(new Error(`Image failed to load onto imgElement. Check file validity/permissions. Event: ${JSON.stringify(e)}`));
-                        };
-                    }
+                // Use FileReader to read the image file as a Data URL
+                const imageDataUrl = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = (e) => reject(new Error(`FileReader failed to read image data: ${e.type}`));
+                    reader.readAsDataURL(selectedFile);
                 });
 
-                // Set canvas dimensions to match the image
-                tempCanvas.width = imgElement.naturalWidth;
-                tempCanvas.height = imgElement.naturalHeight;
+                // Create a new Image object and load the Data URL into it
+                const img = new Image();
+                img.src = imageDataUrl;
 
-                // Draw the image onto the temporary canvas
-                tempCtx.drawImage(imgElement, 0, 0, tempCanvas.width, tempCanvas.height);
+                // Wait for the Image object to load
+                await new Promise((resolve, reject) => {
+                    const timeoutId = setTimeout(() => {
+                        reject(new Error("Image object loading timed out. Check image file or data URI."));
+                    }, 10000); // 10 seconds timeout
 
-                // Use cv.imread directly from the canvas
-                src = cv.imread(tempCanvas);
+                    img.onload = () => {
+                        clearTimeout(timeoutId);
+                        resolve();
+                    };
+                    img.onerror = (e) => {
+                        clearTimeout(timeoutId);
+                        reject(new Error(`Image object failed to load: ${e.type}. Check data URI validity.`));
+                    };
+                });
+                
+                // Directly use the loaded Image object with cv.imread
+                src = cv.imread(img); 
 
-                // Clean up the temporary canvas
-                tempCanvas.remove();
-
-                // Revoke the Blob URL from the preview img element
+                // Revoke the Blob URL from the preview img element if it was set
                 if (imgElement.src && imgElement.src.startsWith('blob:')) {
                     URL.revokeObjectURL(imgElement.src);
                     imgElement.src = ""; // Clear src to prevent re-using invalid URL
