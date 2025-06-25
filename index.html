@@ -39,7 +39,7 @@
         #progressBox { width: 300px; margin: 10px auto; border: 1px solid #666; height: 16px; position: relative; }
         #bar { height: 100%; width: 0; background: #28a745; text-align: center; color: white; font-size: 10px; line-height: 16px; }
     </style>
-    <script src="https://docs.opencv.org/4.x/opencv.js"></script>
+    <script src="https://docs.opencv.org/4.x/opencv.js" async onload="cvReadyCallback()"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 </head>
 <body>
@@ -76,24 +76,27 @@
         let initialBoardState = []; // To store numbers extracted by OCR
 
         // --- Library Initialization ---
-        cv.onRuntimeInitialized = () => {
+        function cvReadyCallback() {
             cvReady = true;
+            console.log("OpenCV is ready!");
             checkReady();
-        };
+        }
 
         (async () => {
             tessWorker = Tesseract.createWorker({
                 logger: m => {
                     // console.log(m); // Uncomment for detailed Tesseract logs
-                    if (m.status === 'recognizing text' || m.status === 'initializing Tesseract' || m.status === 'loading tesseract core' || m.status === 'loading language traineddata') {
-                        setBar(m.progress * 100, `Tesseract: ${m.status}`);
-                    }
+                    // Only update progress bar during actual import, not initial loading
+                    // if (m.status === 'recognizing text' || m.status === 'initializing Tesseract' || m.status === 'loading tesseract core' || m.status === 'loading language traineddata') {
+                    //     setBar(m.progress * 100, `Tesseract: ${m.status}`);
+                    // }
                 }
             });
             await tessWorker.load();
             await tessWorker.loadLanguage('eng');
             await tessWorker.initialize('eng');
             tessReady = true;
+            console.log("Tesseract is ready!");
             checkReady();
         })();
 
@@ -101,7 +104,7 @@
         function checkReady() {
             if (cvReady && tessReady) {
                 document.getElementById('importBtn').disabled = false;
-                console.log("OpenCV and Tesseract are both ready!");
+                console.log("All libraries (OpenCV, Tesseract) are ready. Import button enabled!");
             }
         }
 
@@ -285,9 +288,10 @@
 
                     const valuesInCage = cage.cells.map(([x, y]) => board[x][y]).filter(v => v !== 0);
 
+                    // Check if all cells in the cage are filled, then evaluate the full cage constraint
                     if (valuesInCage.length === cage.cells.length) {
-                        const result = evaluate(valuesInCage, cage.op, cage.target); // Pass target to evaluate
-                        if (result === null || result !== parseInt(cage.target)) {
+                        const result = evaluate(valuesInCage, cage.op); // target is used inside evaluate
+                        if (result === null || result !== parseInt(cage.target)) { // Compare with cage's target
                             board[r][c] = 0;
                             return false;
                         }
@@ -303,13 +307,12 @@
                         if (cage.op === '×' && valuesInCage.reduce((a, b) => a * b, 1) > parseInt(cage.target)) {
                             board[r][c] = 0; return false;
                         }
-                        if (cage.op === '÷' && valuesInCage.includes(0)) { // Avoid division by zero prematurely
-                            board[r][c] = 0; return false;
-                        }
+                        // For division/subtraction, cannot prune easily until both cells are filled
+                        // unless specific rules apply, like values exceeding target with only 1 cell.
                     }
                 }
 
-                board[r][c] = 0;
+                board[r][c] = 0; // Backtrack temporary placement
                 return true;
             }
 
@@ -320,7 +323,7 @@
                 if (op === '+') return values.reduce((a, b) => a + b, 0);
                 if (op === '-') {
                     if (values.length === 2) return Math.abs(values[0] - values[1]);
-                    return null; // Invalid
+                    return null; // Invalid for non-2 cell subtraction
                 }
                 if (op === '×') return values.reduce((a, b) => a * b, 1);
                 if (op === '÷') {
@@ -330,7 +333,7 @@
                         if (minVal === 0 || maxVal % minVal !== 0) return null; // Avoid division by zero or non-integer results
                         return maxVal / minVal;
                     }
-                    return null; // Invalid
+                    return null; // Invalid for non-2 cell division
                 }
                 if (op === '=') return values[0];
                 return null;
@@ -399,7 +402,7 @@
                 return;
             }
 
-            setBar(0, 'Starting image processing...');
+            setBar(0, 'Initializing image processing...');
             document.getElementById('progressBox').style.display = 'block';
             document.getElementById('outputCanvas').style.display = 'block'; // Show canvas for output
 
@@ -407,29 +410,25 @@
 
             try {
                 // 1. Load image and preprocess
+                setBar(5, 'Loading image...');
                 src = cv.imread(imgElement);
                 gray = new cv.Mat();
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
 
+                setBar(10, 'Applying adaptive threshold...');
                 processed = new cv.Mat();
-                // Use ADAPTIVE_THRESH_GAUSSIAN_C for robust local thresholding.
-                // THRESH_BINARY_INV means lines (darker) become white, background (lighter) become black.
-                // Adjust block size (11) and C (2) for your image's characteristics.
                 cv.adaptiveThreshold(gray, processed, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-                // For visualization on canvas, we want lines to be visible, but for internal
-                // processing, `processed` should have lines as white (255) on black (0).
-                // If your lines are black on white, then cv.THRESH_BINARY without _INV.
-
-                // 2. Find lines using HoughLinesP (tuned for general lines, both thin and thick)
+                // 2. Find lines using HoughLinesP
+                setBar(20, 'Detecting lines (Hough Transform)...');
                 lines = new cv.Mat();
-                // Lower threshold to pick up more lines initially.
                 cv.HoughLinesP(processed, lines, 1, Math.PI / 180, 50, 40, 5); // threshold, minLineLength, maxLineGap
 
                 // 3. Filter and cluster lines to identify major grid lines
+                setBar(30, 'Clustering grid lines...');
                 let horizontalLines = [];
                 let verticalLines = [];
-                const angleTolerance = 5 * Math.PI / 180; // +/- 5 degrees tolerance for horizontal/vertical
+                const angleTolerance = 5 * Math.PI / 180; // +/- 5 degrees tolerance
                 const lineClusteringTolerance = 10; // Pixels for clustering nearby lines
 
                 for (let i = 0; i < lines.rows; ++i) {
@@ -488,6 +487,7 @@
 
 
                 // 4. Determine cell coordinates
+                setBar(40, 'Mapping cell coordinates...');
                 const cellCoords = [];
                 for (let r = 0; r < size; r++) {
                     for (let c = 0; c < size; c++) {
@@ -500,64 +500,88 @@
                 }
 
                 // 5. Create a border map by analyzing pixel density along cell edges in `processed` image
-                // borderMap[r][c] = { top: bool, bottom: bool, left: bool, right: bool }
+                setBar(50, 'Analyzing cell borders...');
                 const borderMap = Array(size).fill(0).map(() => Array(size).fill(0).map(() => ({
                     top: false, bottom: false, left: false, right: false
                 })));
 
                 // Threshold for line pixel density (tune this value based on line thickness in your image)
-                // A higher value means it needs more black pixels to be considered a border.
-                const lineDensityThreshold = 0.6; // e.g., 60% of pixels along segment must be black
+                // A higher value means it needs more white pixels (from BINARY_INV) to be considered a border.
+                const lineDensityThreshold = 0.5; // e.g., 50% of pixels along segment must be white (line)
+                const lineCheckWidth = 5; // Pixels to check perpendicular to the line for density (to account for line thickness)
 
                 for (let r = 0; r < size; r++) {
                     for (let c = 0; c < size; c++) {
                         const cell = cellCoords.find(coord => coord.r === r && coord.c === c);
                         if (!cell) continue;
 
-                        // Check top border (between current cell and cell above)
-                        if (r > 0) {
-                            const y = cell.y; // Top edge Y coordinate
-                            let blackPixels = 0;
-                            const segmentLength = cell.width;
-                            for (let x = cell.x; x < cell.x + cell.width; x++) {
-                                if (processed.data[y * processed.cols + x] === 255) { // Check if it's a white pixel (line)
-                                    blackPixels++;
+                        // Function to check pixel density along a line segment
+                        const checkLineSegment = (x_start, y_start, x_end, y_end, isHorizontal) => {
+                            let linePixels = 0;
+                            let totalPixels = 0;
+
+                            if (isHorizontal) {
+                                for (let x = x_start; x < x_end; x++) {
+                                    // Check a small vertical strip around the line to account for thickness
+                                    for (let dy = -Math.floor(lineCheckWidth/2); dy <= Math.ceil(lineCheckWidth/2); dy++) {
+                                        const checkY = y_start + dy;
+                                        if (checkY >= 0 && checkY < processed.rows && x >= 0 && x < processed.cols) {
+                                            totalPixels++;
+                                            if (processed.data[checkY * processed.cols + x] === 255) { // Is it a white pixel (part of a line)?
+                                                linePixels++;
+                                            }
+                                        }
+                                    }
+                                }
+                            } else { // Vertical
+                                for (let y = y_start; y < y_end; y++) {
+                                    // Check a small horizontal strip around the line
+                                    for (let dx = -Math.floor(lineCheckWidth/2); dx <= Math.ceil(lineCheckWidth/2); dx++) {
+                                        const checkX = x_start + dx;
+                                        if (checkX >= 0 && checkX < processed.cols && y >= 0 && y < processed.rows) {
+                                            totalPixels++;
+                                            if (processed.data[y * processed.cols + checkX] === 255) {
+                                                linePixels++;
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                            if (blackPixels / segmentLength > lineDensityThreshold) {
+                            return totalPixels > 0 ? (linePixels / totalPixels) : 0;
+                        };
+
+
+                        // Check top border
+                        if (r > 0) { // Only for internal horizontal lines
+                            const density = checkLineSegment(cell.x, cell.y, cell.x + cell.width, cell.y, true);
+                            if (density > lineDensityThreshold) {
                                 borderMap[r][c].top = true;
-                                borderMap[r-1][c].bottom = true; // Symmetrically update neighbor
+                                borderMap[r-1][c].bottom = true;
                             }
                         }
 
-                        // Check left border (between current cell and cell to the left)
-                        if (c > 0) {
-                            const x = cell.x; // Left edge X coordinate
-                            let blackPixels = 0;
-                            const segmentLength = cell.height;
-                            for (let y = cell.y; y < cell.y + cell.height; y++) {
-                                if (processed.data[y * processed.cols + x] === 255) {
-                                    blackPixels++;
-                                }
-                            }
-                            if (blackPixels / segmentLength > lineDensityThreshold) {
+                        // Check left border
+                        if (c > 0) { // Only for internal vertical lines
+                            const density = checkLineSegment(cell.x, cell.y, cell.x, cell.y + cell.height, false);
+                            if (density > lineDensityThreshold) {
                                 borderMap[r][c].left = true;
-                                borderMap[r][c-1].right = true; // Symmetrically update neighbor
+                                borderMap[r][c-1].right = true;
                             }
                         }
-                        // Note: Outer borders are implicitly handled by the flood fill starting from interior cells.
-                        // The initial grid drawing will have thin outer borders, which is fine.
+                        // Outer borders are handled by the fact that the first row has no top, last no bottom, etc.
                     }
                 }
                 console.log("Border Map (derived from pixel density):", borderMap);
 
                 // 6. Perform OCR on the entire image for all text/words
-                setBar(70, 'Performing general OCR for text elements...');
-                // Use a dedicated worker for better performance for large number of recognitions
+                setBar(70, 'Performing OCR on image...');
+                // We are passing imgElement (the original image) directly to Tesseract
+                // The logger for Tesseract is already configured globally
                 const { data: { words: allWords } } = await tessWorker.recognize(imgElement);
                 console.log("All Recognized Words with BBoxes:", allWords);
 
                 // 7. Map OCR words to grid cells and parse cage labels/numbers
+                setBar(80, 'Mapping OCR results to grid cells...');
                 const cellContents = Array(size).fill(0).map(() => Array(size).fill(0).map(() => ({ labels: [], numbers: [] })));
 
                 for (const word of allWords) {
@@ -573,18 +597,13 @@
                             const parsed = parseCageLabel(word.text.trim());
                             const num = parseInt(word.text.trim());
 
-                            // Store parsed label if valid
-                            if (parsed.op && (parsed.target !== null || parsed.op === '=')) { // Must have an operator, target can be null for '='
+                            if (parsed.op && (parsed.target !== null || parsed.op === '=')) {
                                 cellContents[cell.r][cell.c].labels.push({ text: word.text.trim(), parsed: parsed, bbox: wordRect });
                             }
-                            // Store number if valid (and not part of a label - though label parser should handle this)
-                            if (!isNaN(num) && num >= 1 && num <= size) {
-                                // Ensure this number is not part of a recognized label
-                                if (cellContents[cell.r][cell.c].labels.length === 0 ||
-                                    !cellContents[cell.r][cell.c].labels.some(l => l.text.includes(word.text.trim())) // rudimentary check
-                                ) {
-                                    initialBoardState[cell.r][cell.c] = num; // Pre-fill numbers directly
-                                }
+                            // Store number if valid AND it's a single number (not part of a label like "8+")
+                            // A simple check: if the label parser found an operator, it's a label, not a solitary number.
+                            if (!isNaN(num) && num >= 1 && num <= size && !parsed.op) {
+                                initialBoardState[cell.r][cell.c] = num; // Pre-fill numbers directly
                             }
                             break; // Word found its cell
                         }
@@ -593,10 +612,11 @@
                 console.log("Cell Contents (from OCR mapping):", cellContents);
 
                 // 8. Reconstruct Cages using Flood Fill and Border Map
+                setBar(90, 'Reconstructing cages...');
                 const visitedCellsForCages = Array(size).fill(false).map(() => Array(size).fill(false));
                 cages = []; // Clear global cages array
 
-                function floodFillForCage(startR, startC, targetOp, targetVal, cellCoordsMap, borderMap, visited) {
+                function floodFillForCage(startR, startC, cellCoordsMap, borderMap, visited) {
                     const cageCells = [];
                     const queue = [[startR, startC]];
                     visited[startR][startC] = true;
@@ -618,11 +638,10 @@
                             const nc = currC + dc;
 
                             if (nr >= 0 && nr < size && nc >= 0 && nc < size && !visited[nr][nc]) {
-                                // Check if there's a border between (currR, currC) and (nr, nc)
-                                // If the current cell has a border in 'dir', or neighbor has a border in 'oppDir'
-                                const hasBorder = borderMap[currR][currC][dir] || borderMap[nr][nc][oppDir];
+                                // Check if there's a thick border between (currR, currC) and (nr, nc)
+                                const hasBorder = borderMap[currR][currC][dir]; // Check current cell's border to neighbor
 
-                                if (!hasBorder) {
+                                if (!hasBorder) { // If NO border, add to queue
                                     queue.push([nr, nc]);
                                     visited[nr][nc] = true;
                                 }
@@ -632,7 +651,6 @@
                     return cageCells;
                 }
 
-
                 for (let r = 0; r < size; r++) {
                     for (let c = 0; c < size; c++) {
                         if (cellContents[r][c].labels.length > 0 && !visitedCellsForCages[r][c]) {
@@ -640,7 +658,7 @@
                             const { target: cageTarget, op: cageOp } = label.parsed;
 
                             if (cageTarget !== null || cageOp === '=') { // Ensure it's a valid cage label
-                                const cellsInThisCage = floodFillForCage(r, c, cageOp, cageTarget, cellCoords, borderMap, visitedCellsForCages);
+                                const cellsInThisCage = floodFillForCage(r, c, cellCoords, borderMap, visitedCellsForCages);
 
                                 if (cellsInThisCage.length > 0) {
                                     cellsInThisCage.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
@@ -692,10 +710,16 @@
                             cv.line(dst, new cv.Point(cell.x, cell.y), new cv.Point(cell.x, cell.y + cell.height), new cv.Scalar(255, 0, 0, 255), 3);
                         }
                         // Only draw bottom/right for the last row/col or if it's an outer border
-                        if (r === size - 1 || borderMap[r][c].bottom) {
-                             cv.line(dst, new cv.Point(cell.x, cell.y + cell.height), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(255, 0, 0, 255), 3);
+                        // This prevents drawing internal lines twice.
+                        if (r === size - 1 && !borderMap[r][c].bottom) { // Last row, no internal bottom border
+                             cv.line(dst, new cv.Point(cell.x, cell.y + cell.height), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(0, 0, 255, 255), 3); // Blue outer
+                        } else if (borderMap[r][c].bottom) { // Internal thick bottom border
+                            cv.line(dst, new cv.Point(cell.x, cell.y + cell.height), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(255, 0, 0, 255), 3);
                         }
-                        if (c === size - 1 || borderMap[r][c].right) {
+
+                        if (c === size - 1 && !borderMap[r][c].right) { // Last col, no internal right border
+                            cv.line(dst, new cv.Point(cell.x + cell.width, cell.y), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(0, 0, 255, 255), 3); // Blue outer
+                        } else if (borderMap[r][c].right) { // Internal thick right border
                              cv.line(dst, new cv.Point(cell.x + cell.width, cell.y), new cv.Point(cell.x + cell.width, cell.y + cell.height), new cv.Scalar(255, 0, 0, 255), 3);
                         }
                     }
@@ -716,7 +740,7 @@
                 if (gray) gray.delete();
                 if (processed) processed.delete();
                 if (lines) lines.delete();
-                if (dst) dst.delete();
+                if (dst) dst.delete(); // Delete the final displayed Mat as well
 
                 setTimeout(() => {
                     document.getElementById('progressBox').style.display = 'none';
