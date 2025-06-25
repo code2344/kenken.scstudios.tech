@@ -1,236 +1,291 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>KenKen Builder & Solver</title>
-  <style>
-    body { font-family: sans-serif; text-align: center; margin: 20px; }
-    table { border-collapse: collapse; margin: 10px auto; }
-    td {
-      width: 50px; height: 50px;
-      text-align: center; font-size: 20px; position: relative;
-      cursor: pointer;
-      padding: 0;
-    }
-    .selected { background: #cce5ff; }
-    .cage-label {
-      position: absolute;
-      top: 0; left: 2px;
-      font-size: 12px;
-      color: #666;
-    }
-    .op-button {
-      padding: 5px 10px;
-      margin: 2px;
-      font-size: 16px;
-      cursor: pointer;
-    }
-    .op-button.selected {
-      background-color: #007bff;
-      color: white;
-      border: none;
-    }
-    input[type=number] { width: 60px; }
-    button { margin: 5px; padding: 5px 10px; }
-  </style>
+<meta charset="UTF-8" />
+<title>KenKen Builder, OCR Importer & Solver</title>
+<style>
+  body{font-family:sans-serif;text-align:center;margin:20px}
+  table{border-collapse:collapse;margin:10px auto}
+  td{width:50px;height:50px;text-align:center;font-size:20px;position:relative;cursor:pointer;padding:0}
+  .selected{background:#cce5ff}
+  .cage-label{position:absolute;top:0;left:2px;font-size:12px;color:#666}
+  .op-button{padding:5px 10px;margin:2px;font-size:16px;cursor:pointer}
+  .op-button.selected{background:#007bff;color:#fff;border:none}
+  input[type=number]{width:60px}
+  button{margin:5px;padding:5px 10px}
+  #preview{max-width:300px;max-height:300px;margin-top:10px;border:1px solid #aaa}
+</style>
+<!-- OpenCV & Tesseract -->
+<script async src="https://cdn.jsdelivr.net/npm/@opencv/opencv@4.7.0/opencv.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 </head>
 <body>
 
-<h2>KenKen Puzzle Builder & Solver</h2>
+<h2>KenKen Builder & Solver + Screenshot Importer</h2>
 
-<label>Grid Size: <input id="sizeInput" type="number" value="5" min="3" max="9"></label>
+<!-- ==== Manual builder controls ==== -->
+<label>Grid Size:
+  <input id="sizeInput" type="number" value="5" min="3" max="25">
+</label>
 <button onclick="buildGrid()">Build Grid</button>
 
 <div id="editor" style="margin-top:10px;">
-  <div>
-    <label>Target: <input id="targetInput" type="number"></label>
-    <span>Operator:</span>
-    <button class="op-button" onclick="selectOp(this, '+')">+</button>
-    <button class="op-button" onclick="selectOp(this, '-')">-</button>
-    <button class="op-button" onclick="selectOp(this, '×')">×</button>
-    <button class="op-button" onclick="selectOp(this, '÷')">÷</button>
-    <button class="op-button" onclick="selectOp(this, '=')">=</button>
-    <button onclick="addCage()">Add Cage</button>
-  </div>
+  <label>Target 
+    <input id="targetInput" type="number">
+  </label>
+  <span>Operator:</span>
+  <button class="op-button" onclick="selectOp(this,'+')">+</button>
+  <button class="op-button" onclick="selectOp(this,'-')">-</button>
+  <button class="op-button" onclick="selectOp(this,'×')">×</button>
+  <button class="op-button" onclick="selectOp(this,'÷')">÷</button>
+  <button class="op-button" onclick="selectOp(this,'=')">=</button>
+  <button onclick="addCage()">Add Cage</button>
 </div>
+
+<!-- ==== OCR IMPORT ==== -->
+<hr>
+<h3>Import From Screenshot</h3>
+<input type="file" id="imgInput" accept="image/*">
+<br>
+<img id="preview" alt="preview will appear here">
+<p><button id="importBtn" disabled>Import This Image</button></p>
 
 <table id="grid"></table>
 <button onclick="solve()">Solve</button>
 
+<!-- ==================== SCRIPT ==================== -->
 <script>
-let size = 5;
-let grid = [];
-let cages = [];
-let selectedCells = [];
-let selectedOp = null;
+let size=5, grid=[], cages=[], selectedCells=[], selectedOp=null;
 
-function buildGrid() {
-  size = parseInt(document.getElementById("sizeInput").value);
-  const table = document.getElementById("grid");
-  table.innerHTML = '';
-  cages = [];
-  selectedCells = [];
-  selectedOp = null;
-  clearOpButtons();
-  grid = [];
+/* ---------- UI grid ---------- */
+function buildGrid(n=size){
+  size=parseInt(document.getElementById("sizeInput").value||n);
+  const table=document.getElementById("grid");
+  table.innerHTML='';
+  cages=[]; selectedCells=[]; selectedOp=null; clearOpButtons(); grid=[];
 
-  for (let r = 0; r < size; r++) {
-    const tr = document.createElement("tr");
-    const row = [];
-    for (let c = 0; c < size; c++) {
-      const td = document.createElement("td");
-      td.dataset.row = r;
-      td.dataset.col = c;
-      td.addEventListener("click", () => toggleCell(td));
-      td.textContent = ''; // reset
-      td.style.border = "1px solid #444"; // default
-      tr.appendChild(td);
-      row.push(td);
+  for(let r=0;r<size;r++){
+    const tr=document.createElement('tr'); const row=[];
+    for(let c=0;c<size;c++){
+      const td=document.createElement('td');
+      td.dataset.row=r; td.dataset.col=c;
+      td.addEventListener('click',()=>toggleCell(td));
+      td.textContent=''; td.style.border="1px solid #444";
+      tr.appendChild(td); row.push(td);
     }
-    table.appendChild(tr);
-    grid.push(row);
+    table.appendChild(tr); grid.push(row);
   }
 }
+function toggleCell(td){
+  const r=+td.dataset.row,c=+td.dataset.col;
+  const i=selectedCells.findIndex(v=>v[0]===r&&v[1]===c);
+  if(i>=0){selectedCells.splice(i,1);td.classList.remove('selected')}
+  else   {selectedCells.push([r,c]); td.classList.add('selected')}
+}
+function selectOp(btn,op){selectedOp=op;clearOpButtons();btn.classList.add('selected')}
+function clearOpButtons(){document.querySelectorAll('.op-button').forEach(b=>b.classList.remove('selected'))}
 
-function toggleCell(td) {
-  const r = parseInt(td.dataset.row);
-  const c = parseInt(td.dataset.col);
-  const i = selectedCells.findIndex(cell => cell[0] === r && cell[1] === c);
-  if (i >= 0) {
-    selectedCells.splice(i, 1);
-    td.classList.remove("selected");
-  } else {
-    selectedCells.push([r, c]);
-    td.classList.add("selected");
+function addCage(){
+  const target=parseInt(document.getElementById("targetInput").value);
+  if(!target||!selectedOp||selectedCells.length===0){alert("Fill target, op, select cells");return}
+  /* ---- REMOVE overlapping cages ---- */
+  const overlaps=new Set(selectedCells.map(c=>c+''));
+  cages=cages.filter(cg=>!cg.cells.some(cell=>overlaps.has(cell+'')));
+
+  const cageIndex=cages.length;
+  cages.push({cells:[...selectedCells],target,op:selectedOp});
+
+  refreshGrid(); selectedCells=[]; updateCageBorders();
+}
+function getCageIndex(r,c){
+  for(let i=0;i<cages.length;i++){
+    if(cages[i].cells.some(([x,y])=>x===r&&y===c))return i;
+  } return null;
+}
+function updateCageBorders(){
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      const cell=grid[r][c], cid=getCageIndex(r,c);
+      if(cid===null)continue;
+      const top   =(r===0||getCageIndex(r-1,c)!==cid)?'2px solid #000':'1px solid #444';
+      const left  =(c===0||getCageIndex(r,c-1)!==cid)?'2px solid #000':'1px solid #444';
+      const bottom=(r===size-1||getCageIndex(r+1,c)!==cid)?'2px solid #000':'1px solid #444';
+      const right =(c===size-1||getCageIndex(r,c+1)!==cid)?'2px solid #000':'1px solid #444';
+      Object.assign(cell.style,{borderTop:top,borderLeft:left,borderBottom:bottom,borderRight:right});
+    }
   }
 }
-
-function selectOp(button, op) {
-  selectedOp = op;
-  clearOpButtons();
-  button.classList.add("selected");
-}
-
-function clearOpButtons() {
-  document.querySelectorAll('.op-button').forEach(btn => {
-    btn.classList.remove("selected");
+function refreshGrid(){
+  /* wipe labels & classes */
+  for(let r=0;r<size;r++)for(let c=0;c<size;c++){
+    const td=grid[r][c]; td.textContent='';
+    td.querySelector('.cage-label')?.remove();
+    td.className='';
+  }
+  /* redraw cages */
+  cages.forEach((cg,idx)=>{
+    cg.cells.forEach(([r,c],i)=>{
+      const td=grid[r][c];td.classList.add(`cage-${idx}`);
+      if(i===0){
+        const d=document.createElement('div');d.className='cage-label';
+        d.textContent=cg.target+cg.op;td.appendChild(d);
+      }
+    });
   });
 }
 
-function addCage() {
-  const target = parseInt(document.getElementById("targetInput").value);
-  if (!target || selectedCells.length === 0 || !selectedOp) return alert("Fill target, operator, and select cells");
+/* ---------- Solver ---------- */
+function solve(){
+  const board=Array.from({length:size},()=>Array(size).fill(0));
+  const evaluate=(v,op)=>op==='+'?v.reduce((a,b)=>a+b,0):
+    op==='-'?Math.abs(v[0]-v[1]):
+    op==='×'?v.reduce((a,b)=>a*b,1):
+    op==='÷'?Math.max(...v)/Math.min(...v):
+    v[0];
 
-  const cageIndex = cages.length;
-  cages.push({ cells: [...selectedCells], target, op: selectedOp });
-
-  selectedCells.forEach(([r, c], i) => {
-    const td = grid[r][c];
-    td.classList.remove("selected");
-    td.classList.add(`cage-${cageIndex}`);
-    if (i === 0) {
-      const label = document.createElement("div");
-      label.className = "cage-label";
-      label.textContent = target + selectedOp;
-      td.appendChild(label);
+  const isValid=(r,c,val)=>{
+    for(let i=0;i<size;i++) if(board[r][i]===val||board[i][c]===val) return false;
+    board[r][c]=val;
+    for(const cg of cages){
+      const vals=cg.cells.map(([x,y])=>board[x][y]).filter(v=>v);
+      if(vals.length===cg.cells.length){
+        if(evaluate(vals,cg.op)!==cg.target){board[r][c]=0;return false;}
+      } else if(cg.op==='='&&vals[0]&&vals[0]!==cg.target){board[r][c]=0;return false;}
     }
-  });
+    board[r][c]=0; return true;
+  };
 
-  selectedCells = [];
-  updateCageBorders();
+  const backtrack=(r=0,c=0)=>{
+    if(r===size)return true;
+    const [nr,nc]=c===size-1?[r+1,0]:[r,c+1];
+    for(let v=1;v<=size;v++){
+      if(isValid(r,c,v)){board[r][c]=v;if(backtrack(nr,nc))return true;board[r][c]=0;}
+    } return false;
+  };
+  if(backtrack()){
+    for(let r=0;r<size;r++)for(let c=0;c<size;c++)grid[r][c].textContent=board[r][c];
+  } else alert("No solution");
 }
 
-function getCageIndex(r, c) {
-  for (let i = 0; i < cages.length; i++) {
-    if (cages[i].cells.some(([x, y]) => x === r && y === c)) return i;
+/* ---------- OCR IMPORT ---------- */
+let imgMat=null;
+document.getElementById('imgInput').addEventListener('change',e=>{
+  const file=e.target.files[0]; if(!file)return;
+  const url=URL.createObjectURL(file);
+  const img=document.getElementById('preview');
+  img.src=url; document.getElementById('importBtn').disabled=false;
+  img.onload=()=>{URL.revokeObjectURL(url);}
+});
+
+document.getElementById('importBtn').addEventListener('click',async()=>{
+  if(!cv.Mat || !Tesseract){alert("Libraries still loading…");return;}
+  const imgEl=document.getElementById('preview');
+  /* 1. Read image into OpenCV */
+  let src=cv.imread(imgEl);
+  cv.cvtColor(src,src,cv.COLOR_RGBA2GRAY,0);
+  cv.GaussianBlur(src,src,new cv.Size(3,3),0,0,cv.BORDER_DEFAULT);
+  cv.adaptiveThreshold(src,src,255,cv.ADAPTIVE_THRESH_GAUSSIAN_C,cv.THRESH_BINARY_INV,11,2);
+
+  /* 2. Find the largest contour ≈ outer grid */
+  let contours=new cv.MatVector(),hier=new cv.Mat();
+  cv.findContours(src,contours,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
+  let maxArea=0, maxIdx=-1;
+  for(let i=0;i<contours.size();i++){
+    const area=cv.contourArea(contours.get(i));
+    if(area>maxArea){maxArea=area;maxIdx=i;}
   }
-  return null;
-}
+  if(maxIdx<0){alert("Grid not found");return;}
+  let cnt=contours.get(maxIdx);
+  const rect=cv.minAreaRect(cnt);
+  const pts=cv.RotatedRect.points(rect);
+  const dst_pts=cv.matFromArray(4,1,cv.CV_32FC2,pts.flat());
+  /* sort corners TL,TR,BR,BL */
+  pts.sort((a,b)=>a.x+b.y-b.x-a.y);
+  const [tl,bl,tr,br]=[pts[0],pts[1],pts[2],pts[3]].sort((a,b)=>a.y-b.y);
+  const w=Math.max(
+    Math.hypot(tr.x-tl.x,tr.y-tl.y),
+    Math.hypot(br.x-bl.x,br.y-bl.y));
+  const h=Math.max(
+    Math.hypot(bl.x-tl.x,bl.y-tl.y),
+    Math.hypot(br.x-tr.x,br.y-tr.y));
+  const dst=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,w,0,w,h,0,h]);
+  let M=cv.getPerspectiveTransform(dst_pts,dst);
+  let warped=new cv.Mat();
+  cv.warpPerspective(src,warped,M,new cv.Size(w,h));
 
-function updateCageBorders() {
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
-      const cell = grid[r][c];
-      const thisCage = getCageIndex(r, c);
-      if (thisCage === null) continue;
-
-      const top = (r > 0 && getCageIndex(r - 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
-      const left = (c > 0 && getCageIndex(r, c - 1) !== thisCage) ? '2px solid black' : '1px solid #444';
-      const bottom = (r < size - 1 && getCageIndex(r + 1, c) !== thisCage) ? '2px solid black' : '1px solid #444';
-      const right = (c < size - 1 && getCageIndex(r, c + 1) !== thisCage) ? '2px solid black' : '1px solid #444';
-
-      cell.style.borderTop = top;
-      cell.style.borderLeft = left;
-      cell.style.borderBottom = bottom;
-      cell.style.borderRight = right;
-    }
+  /* 3. Estimate grid size by counting black vertical lines */
+  let proj=new cv.Mat();
+  cv.reduce(warped,proj,0,cv.REDUCE_AVG,cv.CV_32F);
+  let peaks=0,threshold=200;
+  for(let i=0;i<proj.cols;i++){
+    if(proj.data32F[i]>threshold) peaks++;
   }
-}
+  const n=peaks-1; /* number of cells */
+  if(n<3||n>25){alert("Could not detect grid size");return;}
+  document.getElementById('sizeInput').value=n;
+  buildGrid(n);
 
-function solve() {
-  const board = Array.from({ length: size }, () => Array(size).fill(0));
+  /* 4. Detect cage borders & group cells */
+  const cell = Math.floor(w/n);
+  const thick=cell*0.2; // 20% thickness
+  cages=[];
 
-  function isValid(r, c, val) {
-    for (let i = 0; i < size; i++) {
-      if (board[r][i] === val || board[i][c] === val) return false;
+  const visited=Array.from({length:n},()=>Array(n).fill(false));
+  const getBorder=(r,c,dir)=>{
+    const x=c*cell,y=r*cell;
+    const [sx,sy,ex,ey]=dir==='top'? [x,y,x+cell,y]:
+                         dir==='left'?[x,y,x,y+cell]:
+                         dir==='bottom'?[x,y+cell,x+cell,y+cell]:
+                         [x+cell,y,x+cell,y+cell];
+    let cnt=0,total=0;
+    for(let i=0;i<10;i++){
+      const px=Math.round(sx+(ex-sx)*i/10);
+      const py=Math.round(sy+(ey-sy)*i/10);
+      total++;
+      if(warped.ucharPtr(py,px)[0]>0)cnt++;
     }
+    return cnt/total>0.5; // thick line
+  };
 
-    board[r][c] = val;
-
-    for (const cage of cages) {
-      const values = cage.cells.map(([x, y]) => board[x][y]).filter(v => v !== 0);
-      if (values.length === cage.cells.length) {
-        const result = evaluate(values, cage.op);
-        if (result !== cage.target) {
-          board[r][c] = 0;
-          return false;
-        }
-      } else if (cage.op === '=' && values[0] && values[0] !== cage.target) {
-        board[r][c] = 0;
-        return false;
+  const cagesById={};
+  let id=0;
+  for(let r=0;r<n;r++)for(let c=0;c<n;c++){
+    if(visited[r][c])continue;
+    const queue=[[r,c]]; visited[r][c]=true;
+    const cells=[];
+    while(queue.length){
+      const [rr,cc]=queue.pop();cells.push([rr,cc]);
+      const dirs=[['top',-1,0],['bottom',1,0],['left',0,-1],['right',0,1]];
+      for(const [d,dr,dc] of dirs){
+        const nr=rr+dr,nc=cc+dc;
+        if(nr<0||nc<0||nr>=n||nc>=n||visited[nr][nc])continue;
+        if(!getBorder(rr,cc,d)){visited[nr][nc]=true;queue.push([nr,nc]);}
       }
     }
-
-    board[r][c] = 0;
-    return true;
+    cagesById[id++]=cells;
   }
 
-  function evaluate(values, op) {
-    if (op === '+') return values.reduce((a, b) => a + b, 0);
-    if (op === '-') return Math.abs(values[0] - values[1]);
-    if (op === '×') return values.reduce((a, b) => a * b, 1);
-    if (op === '÷') return Math.max(...values) / Math.min(...values);
-    if (op === '=') return values[0];
+  /* 5. OCR each cage’s label */
+  const worker=await Tesseract.createWorker('eng',{logger:m=>{}});
+  for(const cells of Object.values(cagesById)){
+    const [r0,c0]=cells[0];
+    const roi=warped.roi(new cv.Rect(c0*cell,r0*cell,cell,cell));
+    const labelCanvas=document.createElement('canvas');
+    labelCanvas.width=cell; labelCanvas.height=cell;
+    cv.imshow(labelCanvas,roi);
+    const {data:{text}}=await worker.recognize(labelCanvas);
+    const match=text.trim().match(/^(\d+)\s*([+\-×÷=])?/);
+    if(!match){continue;}
+    let [,target,op]=match;target=parseInt(target);op=op||'=';
+    cages.push({cells:cells.map(([r,c])=>[r,c]),target,op});
   }
+  await worker.terminate();
 
-  function backtrack(r = 0, c = 0) {
-    if (r === size) return true;
-    const [nextR, nextC] = c === size - 1 ? [r + 1, 0] : [r, c + 1];
-
-    for (let val = 1; val <= size; val++) {
-      if (isValid(r, c, val)) {
-        board[r][c] = val;
-        if (backtrack(nextR, nextC)) return true;
-        board[r][c] = 0;
-      }
-    }
-    return false;
-  }
-
-  if (backtrack()) {
-    for (let r = 0; r < size; r++) {
-      for (let c = 0; c < size; c++) {
-        grid[r][c].textContent = board[r][c];
-      }
-    }
-  } else {
-    alert("No solution found.");
-  }
-}
-
-// Start default
+  refreshGrid(); updateCageBorders();
+  alert("Import complete!");
+});
+/* Initial grid */
 buildGrid();
 </script>
-
 </body>
 </html>
