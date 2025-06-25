@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KenKen Builder • OCR Import • Solver</title>
     <style>
         body { font-family: sans-serif; text-align: center; margin: 20px; background-color: #f4f4f4; color: #333; }
@@ -119,8 +120,10 @@
         }
         hr { border: 0; height: 1px; background-image: linear-gradient(to right, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0)); margin: 30px auto; width: 80%; }
     </style>
+    <!-- OpenCV script -->
     <script src="https://docs.opencv.org/4.x/opencv.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+    <!-- Tesseract.js library (main script) - NOW USING V3.0.3 -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@3.0.3/dist/tesseract.min.js"></script>
 </head>
 <body>
 
@@ -146,7 +149,8 @@
     <h3>Import a Screenshot</h3>
     <input type="file" id="imgInput" accept="image/*">
     <br><img id="preview" alt="Image Preview">
-    <canvas id="outputCanvas"></canvas> <div id="progressBox" style="display:none"><div id="bar"></div></div>
+    <canvas id="outputCanvas"></canvas> <!-- Added canvas for OpenCV output -->
+    <div id="progressBox" style="display:none"><div id="bar"></div></div>
     <p><button id="importBtn" disabled onclick="importImage()">Import This Image</button></p>
 
     <table id="grid"></table>
@@ -180,30 +184,52 @@
             // Tesseract worker initialization
             (async () => {
                 try {
-                    tessWorker = Tesseract.createWorker('eng', {
-                        logger: m => console.log(m), // Keep verbose logging for any hints
-                        // *** IMPORTANT CHANGE: Disable Web Worker ***
-                        worker: false
-                    });
+                    // FIX: Corrected Tesseract.createWorker syntax as per Tesseract.js v3.x.x API
+                    // Argument order: langs, oem, options
+                    tessWorker = Tesseract.createWorker(
+                        'eng', // 1st argument: langs (language)
+                        null,  // 2nd argument: oem (OCR Engine Mode - null for default)
+                        {      // 3rd argument: options object
+                            workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@3.0.3/dist/worker.min.js',
+                            corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js@3.0.3/dist/tesseract-core.js', // Note: .js for v3 core
+                            langPath: 'https://cdn.jsdelivr.net/npm/tessdata@3.0.3/', // Base URL for language data files
+                            logger: m => {
+                                console.log('Tesseract Log:', m); // Logs all internal Tesseract messages
+                                if (m.status) {
+                                    // Update main page status to reflect Tesseract's internal progress
+                                    document.getElementById('libraryStatus').textContent = `Tesseract: ${m.status.replace(/_/g, ' ')} (${Math.round(m.progress * 100)}%)`;
+                                }
+                            },
+                            worker: false // IMPORTANT: Disable Web Worker - all OCR runs on main thread
+                        }
+                    );
+
+                    // This guard is crucial to catch if Tesseract.createWorker itself fails
+                    if (!tessWorker || typeof tessWorker.load !== 'function') {
+                        throw new Error("Tesseract.createWorker() did not return a valid worker object. Tesseract.js core initialization failed. Please check setup.");
+                    }
+
                     await tessWorker.load();
                     await tessWorker.loadLanguage('eng');
                     await tessWorker.initialize('eng');
                     console.log("Tesseract is ready!");
                     tessReadyPromiseResolver();
+
                 } catch (error) {
                     console.error("Failed to initialize Tesseract:", error);
-                    document.getElementById('libraryStatus').textContent = "Error loading Tesseract. Check console/network or try clearing cache.";
-                    alert("Critical Error: Tesseract.js failed to load. Please check your internet connection and browser console for details.");
+                    document.getElementById('libraryStatus').textContent = "Error loading Tesseract. Check console & network for details.";
+                    alert("Error loading Tesseract. Please check your internet connection or console for details.");
+                    document.getElementById('importBtn').disabled = true; // Disable import button on Tesseract failure
                 }
             })();
 
             // --- Centralized Readiness Check & App Start ---
-            Promise.all([cvRuntimeInitializedPromise, tessWorkerInitializedPromise])
+            Promise.all([cvReadyPromiseResolver, tessWorkerInitializedPromise])
                 .then(() => {
                     console.log("All essential libraries (OpenCV, Tesseract) are ready!");
                     document.getElementById('importBtn').disabled = false;
                     document.getElementById('libraryStatus').textContent = "Libraries loaded successfully. Ready to build or import!";
-                    buildGrid();
+                    buildGrid(); // Build the initial grid only after libraries are ready
                 })
                 .catch(error => {
                     console.error("One or more libraries failed to load:", error);
